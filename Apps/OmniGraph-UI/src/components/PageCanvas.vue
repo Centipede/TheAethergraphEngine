@@ -1,13 +1,13 @@
 <template>
-  <div class="page-canvas">
-    <div class="page-canvas-toolbar" v-if="!minimal">
+  <div class="page-canvas" :class="{ 'page-canvas--hide-toolbars': !showToolInfoBars }">
+    <div class="page-canvas-toolbar" v-if="!presentationOnly">
       <sl-checkbox size="small" :checked="showConfidence" @sl-change="showConfidence = $event.target.checked">Confidence</sl-checkbox>
       <sl-checkbox size="small" :checked="applyProcessing" @sl-change="applyProcessing = $event.target.checked">Processing</sl-checkbox>
     </div>
 
     <div
         class="interactive-area"
-        :class="[pointerVisible ? 'cursor-mode-off' : '', minimal ? 'interactive-area--minimal' : '']"
+        :class="[pointerVisible ? 'cursor-mode-off' : '', presentationOnly ? 'interactive-area--presentation-only' : '']"
         @mousemove="updatePointerAction"
         @mouseenter="changePointerState(true)"
         @mouseleave="changePointerState(false)"
@@ -53,7 +53,7 @@
                  class="hocr-dimmed-overlay" />
 
             <div class="hocr-overlay-item-info"
-                 v-if="item.role === 'active'">
+                 v-if="showBadges && item.role === 'active'">
               <span class="hocr-overlay-item-kind"
                     v-if="item.kind">{{ item.kind }}</span>
               <span class="hocr-overlay-item-lang" v-if="item.lang">[{{ item.lang }}]</span>
@@ -142,7 +142,7 @@
       </div>
 
       <CustomPointer
-          v-if="!minimal"
+          v-if="!presentationOnly"
           :visible="pointerVisible"
           :enabled="pointerSettings?.enabled ?? true"
           :x="pointerX"
@@ -153,7 +153,7 @@
       />
     </div>
 
-    <div class="page-canvas-info" v-if="!minimal">
+    <div class="page-canvas-info" v-if="!presentationOnly">
       <span class="page-canvas-hint">(Index: {{ page.index }})</span>
       <span :class="{ 'page-canvas-unnamed': !page.name }">p. {{ label }}</span>
       <span class="page-canvas-hint">(Scan: {{ page.scan }})</span>
@@ -209,26 +209,34 @@ const props = withDefaults(defineProps<{
   page: Page;
   machineName: string;
   imageBaseUrl: string;
-  crop?: PixelRegion;
+
+  showBlockHints?: boolean;
+  showToolInfoBars?: boolean;
+  showBadges?: boolean;
   showCropOverlay?: boolean;
+  presentationOnly?: boolean;
+
+  crop?: PixelRegion;
+
   palette?: EditorPalette;
-  hocrLevel?: HocrLevel | null;
   pointerSettings?: PointerSettings;
+  zoomRequest?: ZoomRequest;
+
+  hocrLevel?: HocrLevel | null;
+  careaLayers?: { flow: boolean; layout: boolean };
+  dimLayers?: DimLayers;
+
+  flows?: Record<string, FlowSchema>;
+  layouts?: Record<string, LayoutSchema>;
+
   interactionUpdate?: PageInteractionUpdate;
   interactionClick?: PageInteractionClick;
   interactionDrag?: PageInteractionDrag;
-  flows?: Record<string, FlowSchema>;
-  layouts?: Record<string, LayoutSchema>;
-  careaLayers?: { flow: boolean; layout: boolean };
-  minimal?: boolean;
-  showBlockHints?: boolean;
-  dimLayers?: DimLayers;
-  zoomRequest?: ZoomRequest;
 }>(), {
   showCropOverlay: true,
   palette: () => DEFAULT_PALETTE,
   hocrLevel: null,
-  minimal: false,
+  presentationOnly: false,
   showBlockHints: false,
   dimLayers: () => ({
     flows: false,
@@ -237,6 +245,8 @@ const props = withDefaults(defineProps<{
     dimmedLayouts: ref(new Set<string>()),
   }),
   zoomRequest: () => ({ mode: 'NoZoom' }),
+  showToolInfoBars: true,
+  showBadges: true,
 });
 
 const { hocrPage } = useHocrContext();
@@ -334,16 +344,30 @@ const hocrBbox = computed((): PixelRegion | null => {
   return found ? { left, top, right, bottom } : null;
 });
 
+function expandRegion(region: PixelRegion, margin: number): PixelRegion {
+  const left = Math.max(0, region.left - margin);
+  const top = Math.max(0, region.top - margin);
+  const right = Math.min(props.page.scan_width, region.right + margin);
+  const bottom = Math.min(props.page.scan_height, region.bottom + margin);
+
+  return {
+    left,
+    top,
+    right: Math.max(right, left + 1),
+    bottom: Math.max(bottom, top + 1),
+  };
+}
+
 const viewArea = computed((): PixelRegion => {
   const req = props.zoomRequest;
   if (req.mode === 'CropRegion' && props.crop) {
-    return props.crop;
+    return expandRegion(props.crop, req.margin);
   }
   if (req.mode === 'PageBBox' && hocrBbox.value) {
-    return hocrBbox.value;
+    return expandRegion(hocrBbox.value, req.margin);
   }
   if (req.mode === 'Custom' && req.area) {
-    return req.area;
+    return { ...req.area };
   }
   return {
     left: 0,
@@ -591,7 +615,7 @@ const rightDiscardStyle = computed(() => ({
 }));
 
 function changePointerState(inside: boolean) {
-  if (props.minimal) return;
+  if (props.presentationOnly) return;
   pointerVisible.value = props.pointerSettings ? inside : false;
   if (!inside) {
     dragStart.value = null;
@@ -601,7 +625,7 @@ function changePointerState(inside: boolean) {
 }
 
 function handleMouseDown(e: MouseEvent) {
-  if (props.minimal || !props.interactionDrag) return;
+  if (props.presentationOnly || !props.interactionDrag) return;
   const point = getScanPointForEvent(e);
   if (point) {
     dragStart.value = point;
@@ -611,7 +635,7 @@ function handleMouseDown(e: MouseEvent) {
 }
 
 function handleMouseUp(e: MouseEvent) {
-  if (props.minimal) return;
+  if (props.presentationOnly) return;
   if (isDragging.value && dragStart.value && props.interactionDrag) {
     const point = getScanPointForEvent(e);
     if (point) {
@@ -638,7 +662,7 @@ function updateDragState(event: MouseEvent) {
 }
 
 function updatePointerAction(event: MouseEvent) {
-  if (props.minimal) return;
+  if (props.presentationOnly) return;
 
   pointerX.value = event.clientX;
   pointerY.value = event.clientY;
@@ -720,7 +744,7 @@ function updatePointerAction(event: MouseEvent) {
 }
 
 function performPendingAction() {
-  if (props.minimal) return;
+  if (props.presentationOnly) return;
   if (wasJustDragging.value) {
     wasJustDragging.value = false;
     return;
@@ -776,13 +800,13 @@ function mapTopToPct(value: number): string {
 
 function mapRightToPct(value: number): string {
   return viewWidth.value > 0
-      ? `${((value - (props.page.scan_width - viewArea.value.right)) / viewWidth.value) * 100}%`
+      ? `${((viewArea.value.right - value) / viewWidth.value) * 100}%`
       : '0%';
 }
 
 function mapBottomToPct(value: number): string {
   return viewHeight.value > 0
-      ? `${((value - (props.page.scan_height - viewArea.value.bottom)) / viewHeight.value) * 100}%`
+      ? `${((viewArea.value.bottom - value) / viewHeight.value) * 100}%`
       : '0%';
 }
 
@@ -962,6 +986,35 @@ function overlayItemStyle(item: OverlayItem) {
   justify-content: center;
   overflow: auto;
   padding: 1rem;
+}
+
+.page-canvas--hide-toolbars .page-canvas-image-frame {
+  padding: 5px;
+}
+
+.page-canvas--hide-toolbars .page-canvas-toolbar,
+.page-canvas--hide-toolbars .page-canvas-info {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 20;
+  opacity: 0;
+  transition: opacity 0.2s;
+  pointer-events: none;
+}
+
+.page-canvas--hide-toolbars .page-canvas-toolbar {
+  top: 0;
+}
+
+.page-canvas--hide-toolbars .page-canvas-info {
+  bottom: 0;
+}
+
+.page-canvas--hide-toolbars:hover .page-canvas-toolbar,
+.page-canvas--hide-toolbars:hover .page-canvas-info {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .page-canvas-image-wrap {

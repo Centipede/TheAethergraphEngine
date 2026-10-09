@@ -31,7 +31,9 @@
               :machine-name="machineName"
               :image-base-url="scanBaseUrl"
               :palette="palette"
-              :minimal="page.index !== currentPageIndex"
+              :presentation-only="page.index !== currentPageIndex"
+              :show-tool-info-bars="false"
+              :show-badges="false"
               :show-block-hints="true"
               :reload-trigger="hocrReloadTrigger[page.scan.replace(/\.[^.]+$/, '')]"
               :interaction-update="makeInteractionUpdateHandler(page)"
@@ -289,8 +291,12 @@ function getPageStyle(pageIndex: number, currentIdx: number | null) {
 
 .bridge-page-wrapper {
   box-sizing: border-box;
-  padding: 0.5rem;
+  padding: 2px;
   display: flex;
   flex-direction: column;
+}
+
+.bridge-page-wrapper :deep(.page-canvas-image-frame) {
+  padding: 2px;
 }
 </style>
