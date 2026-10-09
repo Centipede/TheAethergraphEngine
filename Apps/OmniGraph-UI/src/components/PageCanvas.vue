@@ -1063,6 +1063,8 @@ function overlayItemStyle(item: OverlayItem) {
 }
 
 .hocr-overlay {
+  --hocr-color: transparent;
+  --info-display: none;
   box-sizing: border-box;
 }
 
@@ -1120,12 +1122,14 @@ function overlayItemStyle(item: OverlayItem) {
 }
 
 /* N-1: parent context — faint dashed outline, no fill, interactive on hover */
+/*noinspection CssUnusedSymbol*/
 .hocr-overlay--parent {
   outline: 2px dotted var(--hocr-color);
   outline-offset: 0.2rem;
   opacity: 1;
 }
 
+/*noinspection CssUnusedSymbol*/
 .hocr-overlay--parent:hover {
   outline: 2px dotted var(--hocr-color) !important;
   background: color-mix(in srgb, var(--hocr-color) 10%, transparent) !important;
@@ -1133,6 +1137,7 @@ function overlayItemStyle(item: OverlayItem) {
 }
 
 /* N: active level — solid outline + translucent fill */
+/*noinspection CssUnusedSymbol*/
 .hocr-overlay--active {
   outline: 2px solid var(--hocr-color);
   background: color-mix(in srgb, var(--hocr-color) 15%, transparent);
@@ -1140,6 +1145,7 @@ function overlayItemStyle(item: OverlayItem) {
 }
 
 /* N: active level — solid outline + translucent fill */
+/*noinspection CssUnusedSymbol*/
 .hocr-overlay--active:hover {
   outline: 2px solid var(--hocr-color) !important;
   background: color-mix(in srgb, var(--hocr-color) 45%, transparent) !important;
