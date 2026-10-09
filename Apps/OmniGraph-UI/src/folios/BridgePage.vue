@@ -11,6 +11,7 @@
       :interaction-update="interactionUpdate"
       :interaction-click="interactionClick"
       :dim-layers="dimLayers"
+      :zoom-request="{ mode: 'PageBBox'}"
     />
   </div>
 </template>

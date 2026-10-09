@@ -4,6 +4,7 @@
       <sl-checkbox size="small" :checked="showConfidence" @sl-change="showConfidence = $event.target.checked">Confidence</sl-checkbox>
       <sl-checkbox size="small" :checked="applyProcessing" @sl-change="applyProcessing = $event.target.checked">Processing</sl-checkbox>
     </div>
+
     <div
         class="interactive-area"
         :class="[pointerVisible ? 'cursor-mode-off' : '', minimal ? 'interactive-area--minimal' : '']"
@@ -22,6 +23,7 @@
         <div
             ref="imageWrapRef"
             class="page-canvas-image-wrap"
+            :style="imageWrapStyle"
         >
           <img id="scan-image"
                :src="src"
@@ -46,7 +48,6 @@
                class="hocr-overlay"
                :class="[`hocr-overlay--${item.role}`, { 'hocr-overlay--selected': isItemSelected(item.id), 'hocr-overlay--indicated': item.id === indicatedItemId }]"
                :style="overlayItemStyle(item)"
-
           >
             <div v-if="isDimmed(item)"
                  class="hocr-dimmed-overlay" />
@@ -161,7 +162,7 @@
 </template>
 
 <script setup lang="ts">
-import {computed, inject, ref, type Ref, onMounted} from 'vue';
+import {computed, inject, ref, type Ref} from 'vue';
 import { useHocrContext } from '../composables/useHocr';
 import {
   type PixelRegion,
@@ -183,7 +184,8 @@ import {
   type FlowSchema,
   type LayoutSchema,
   type EditorPalette, type HintType, type PageInteractionClick, type PageInteractionDrag,
-  type DimLayers
+  type DimLayers,
+  type ZoomRequest,
 } from '../types';
 import { DEFAULT_PALETTE } from '../types';
 import {makeVariedPalette, applyColorSpecs} from '../utils/colors';
@@ -221,6 +223,7 @@ const props = withDefaults(defineProps<{
   minimal?: boolean;
   showBlockHints?: boolean;
   dimLayers?: DimLayers;
+  zoomRequest?: ZoomRequest;
 }>(), {
   showCropOverlay: true,
   palette: () => DEFAULT_PALETTE,
@@ -233,6 +236,7 @@ const props = withDefaults(defineProps<{
     dimmedFlows: ref(new Set<string>()),
     dimmedLayouts: ref(new Set<string>()),
   }),
+  zoomRequest: () => ({ mode: 'NoZoom' }),
 });
 
 const { hocrPage } = useHocrContext();
@@ -262,8 +266,36 @@ function isItemSelected(id: string) {
   return true;
 }
 
+const imageWrapStyle = computed(() => {
+  const style: any = {
+    aspectRatio: `${viewWidth.value} / ${viewHeight.value}`,
+  };
+  if (props.zoomRequest.mode !== 'NoZoom') {
+    style.width = '100%';
+    style.overflow = 'hidden';
+  }
+  return style;
+});
+
 const imageStyle = computed(() => {
-  return {};
+  if (props.zoomRequest.mode === 'NoZoom') {
+    return {};
+  }
+
+  const widthPct = (props.page.scan_width / viewWidth.value) * 100;
+  const heightPct = (props.page.scan_height / viewHeight.value) * 100;
+
+  const leftPct = -(viewArea.value.left / viewWidth.value) * 100;
+  const topPct = -(viewArea.value.top / viewHeight.value) * 100;
+
+  return {
+    position: 'absolute' as const,
+    left: `${leftPct}%`,
+    top: `${topPct}%`,
+    width: `${widthPct}%`,
+    height: `${heightPct}%`,
+    maxWidth: 'none',
+  };
 });
 
 const label = computed(() => props.page.name || props.page.scan);
@@ -282,6 +314,47 @@ const src = computed(() => {
 
 const imageFrameRef = ref<HTMLElement | null>(null);
 const imageWrapRef = ref<HTMLElement | null>(null);
+
+const hocrBbox = computed((): PixelRegion | null => {
+  const page = hocrPage?.value;
+  if (!page || page.careas.length === 0) return null;
+
+  let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
+  let found = false;
+
+  for (const carea of page.careas) {
+    const [l, t, r, b] = carea.bbox;
+    left = Math.min(left, l);
+    top = Math.min(top, t);
+    right = Math.max(right, r);
+    bottom = Math.max(bottom, b);
+    found = true;
+  }
+
+  return found ? { left, top, right, bottom } : null;
+});
+
+const viewArea = computed((): PixelRegion => {
+  const req = props.zoomRequest;
+  if (req.mode === 'CropRegion' && props.crop) {
+    return props.crop;
+  }
+  if (req.mode === 'PageBBox' && hocrBbox.value) {
+    return hocrBbox.value;
+  }
+  if (req.mode === 'Custom' && req.area) {
+    return req.area;
+  }
+  return {
+    left: 0,
+    top: 0,
+    right: props.page.scan_width,
+    bottom: props.page.scan_height
+  };
+});
+
+const viewWidth = computed(() => viewArea.value.right - viewArea.value.left);
+const viewHeight = computed(() => viewArea.value.bottom - viewArea.value.top);
 
 const pointerVisible = ref(false);
 const pointerX = ref(0);
@@ -303,10 +376,10 @@ const dragRectStyle = computed(() => {
   const y2 = Math.max(dragStart.value.y, dragCurrent.value.y);
   return {
     position: 'absolute' as const,
-    left: scanXPct(x1),
-    top: scanYPct(y1),
-    width: scanXPct(x2 - x1),
-    height: scanYPct(y2 - y1),
+    left: mapLeftToPct(x1),
+    top: mapTopToPct(y1),
+    width: mapWidthToPct(x2 - x1),
+    height: mapHeightToPct(y2 - y1),
     pointerEvents: 'none' as const,
     zIndex: 10,
   };
@@ -464,10 +537,10 @@ const overlayItems = computed((): OverlayItem[] => {
   return items;
 });
 
-const cropLeft = computed(() => props.crop ? scanXPct(props.crop.left) : '0%');
-const cropTop = computed(() => props.crop ? scanYPct(props.crop.top) : '0%');
-const cropRight = computed(() => props.crop ? scanXPct(props.crop.right) : '0%');
-const cropBottom = computed(() => props.crop ? scanYPct(props.crop.bottom) : '0%');
+const cropLeft = computed(() => props.crop ? mapLeftToPct(props.crop.left) : '0%');
+const cropTop = computed(() => props.crop ? mapTopToPct(props.crop.top) : '0%');
+const cropRight = computed(() => props.crop ? mapRightToPct(props.crop.right) : '0%');
+const cropBottom = computed(() => props.crop ? mapBottomToPct(props.crop.bottom) : '0%');
 
 const cropAreaStyle = computed(() => ({
   position: 'absolute' as const,
@@ -672,12 +745,12 @@ function getScanPointForEvent(event: MouseEvent): { x: number; y: number } | nul
   const imageY = clamp(clientY - imageRect.top, 0, imageRect.height);
 
   const scanX = imageRect.width > 0
-      ? Math.round((imageX / imageRect.width) * props.page.scan_width)
-      : 0;
+      ? Math.round((imageX / imageRect.width) * viewWidth.value) + viewArea.value.left
+      : viewArea.value.left;
 
   const scanY = imageRect.height > 0
-      ? Math.round((imageY / imageRect.height) * props.page.scan_height)
-      : 0;
+      ? Math.round((imageY / imageRect.height) * viewHeight.value) + viewArea.value.top
+      : viewArea.value.top;
 
   return {
     x: clamp(scanX, 0, props.page.scan_width),
@@ -689,15 +762,39 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
-function scanXPct(value: number): string {
-  return props.page.scan_width > 0
-      ? `${(value / props.page.scan_width) * 100}%`
+function mapLeftToPct(value: number): string {
+  return viewWidth.value > 0
+      ? `${((value - viewArea.value.left) / viewWidth.value) * 100}%`
       : '0%';
 }
 
-function scanYPct(value: number): string {
-  return props.page.scan_height > 0
-      ? `${(value / props.page.scan_height) * 100}%`
+function mapTopToPct(value: number): string {
+  return viewHeight.value > 0
+      ? `${((value - viewArea.value.top) / viewHeight.value) * 100}%`
+      : '0%';
+}
+
+function mapRightToPct(value: number): string {
+  return viewWidth.value > 0
+      ? `${((value - (props.page.scan_width - viewArea.value.right)) / viewWidth.value) * 100}%`
+      : '0%';
+}
+
+function mapBottomToPct(value: number): string {
+  return viewHeight.value > 0
+      ? `${((value - (props.page.scan_height - viewArea.value.bottom)) / viewHeight.value) * 100}%`
+      : '0%';
+}
+
+function mapWidthToPct(value: number): string {
+  return viewWidth.value > 0
+      ? `${(value / viewWidth.value) * 100}%`
+      : '0%';
+}
+
+function mapHeightToPct(value: number): string {
+  return viewHeight.value > 0
+      ? `${(value / viewHeight.value) * 100}%`
       : '0%';
 }
 
@@ -754,10 +851,10 @@ function hintStyle(hint: Hint) {
   const color = getHintColor(hint.type);
   return {
     position: 'absolute' as const,
-    left: scanXPct(hint.area.left),
-    top: scanYPct(hint.area.top),
-    width: scanXPct(hint.area.right - hint.area.left),
-    height: scanYPct(hint.area.bottom - hint.area.top),
+    left: mapLeftToPct(hint.area.left),
+    top: mapTopToPct(hint.area.top),
+    right: mapRightToPct(hint.area.right),
+    bottom: mapBottomToPct(hint.area.bottom),
     pointerEvents: 'none' as const,
     border: `1px solid ${color}`,
     background: `color-mix(in srgb, ${color} 40%, transparent)`
@@ -768,10 +865,10 @@ function overlayItemStyle(item: OverlayItem) {
   const [l, t, r, b] = item.bbox;
   const style: any = {
     position: 'absolute' as const,
-    left: scanXPct(l),
-    top: scanYPct(t),
-    width: scanXPct(r - l),
-    height: scanYPct(b - t),
+    left: mapLeftToPct(l),
+    top: mapTopToPct(t),
+    width: mapWidthToPct(r - l),
+    height: mapHeightToPct(b - t),
     '--hocr-color': item.color,
   };
 
