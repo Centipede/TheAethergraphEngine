@@ -40,32 +40,32 @@
 
             <!-- Before -->
             <div v-if="block.hints.break_from_preceding && block.hints.break_from_preceding !== 'untested'" class="hocr-hints-line">
-              <div class="hocr-hints-conclusion" :class="getEvidenceClass(block.hints.break_from_preceding)">
+              <div class="hocr-hints-conclusion" :class="getEvidenceClass(block.hints.break_from_preceding)" :title="getConclusionTitle('preceding', block.hints.break_from_preceding)">
                 <sl-icon name="box-arrow-left"></sl-icon>
                 <span>{{ getEvidenceValue(block.hints.break_from_preceding) === true ? '◇' : '⬉' }}</span>
               </div>
               <template v-for="param in precedingParams" :key="param.key">
-                <div v-if="block.hints[param.key] && block.hints[param.key] !== 'untested'" class="hocr-hint-tag" :class="getEvidenceClass(block.hints[param.key]!)">
+                <div v-if="block.hints[param.key] && block.hints[param.key] !== 'untested'" class="hocr-hint-tag" :class="getEvidenceClass(block.hints[param.key]!)" :title="param.title">
                   {{ param.label }}
                 </div>
               </template>
-              <div v-if="isAssigned(block.hints.break_from_preceding)" class="hocr-hint-tag" :class="getEvidenceClass(block.hints.break_from_preceding)">
+              <div v-if="isAssigned(block.hints.break_from_preceding)" class="hocr-hint-tag" :class="getEvidenceClass(block.hints.break_from_preceding)" title="Manually assigned by user">
                 user
               </div>
             </div>
 
             <!-- After -->
             <div v-if="block.hints.break_from_following && block.hints.break_from_following !== 'untested'" class="hocr-hints-line">
-              <div class="hocr-hints-conclusion" :class="getEvidenceClass(block.hints.break_from_following)">
+              <div class="hocr-hints-conclusion" :class="getEvidenceClass(block.hints.break_from_following)" :title="getConclusionTitle('following', block.hints.break_from_following)">
                 <sl-icon name="box-arrow-right"></sl-icon>
                 <span>{{ getEvidenceValue(block.hints.break_from_following) === true ? '◇' : '⬊' }}</span>
               </div>
               <template v-for="param in followingParams" :key="param.key">
-                <div v-if="block.hints[param.key] && block.hints[param.key] !== 'untested'" class="hocr-hint-tag" :class="getEvidenceClass(block.hints[param.key]!)">
+                <div v-if="block.hints[param.key] && block.hints[param.key] !== 'untested'" class="hocr-hint-tag" :class="getEvidenceClass(block.hints[param.key]!)" :title="param.title">
                   {{ param.label }}
                 </div>
               </template>
-              <div v-if="isAssigned(block.hints.break_from_following)" class="hocr-hint-tag" :class="getEvidenceClass(block.hints.break_from_following)">
+              <div v-if="isAssigned(block.hints.break_from_following)" class="hocr-hint-tag" :class="getEvidenceClass(block.hints.break_from_following)" title="Manually assigned by user">
                 user
               </div>
             </div>
@@ -231,16 +231,27 @@ function isAssigned(ev?: Evidence): boolean {
   return typeof ev === 'object' && ev !== null && 'assigned' in ev;
 }
 
+function getConclusionTitle(direction: 'preceding' | 'following', ev: Evidence): string {
+  const val = getEvidenceValue(ev);
+  if (val === null) return direction === 'preceding' ? 'Preceding boundary' : 'Following boundary';
+
+  if (direction === 'preceding') {
+    return val ? 'Break from preceding block' : 'Continuous from preceding block';
+  } else {
+    return val ? 'Break from following block' : 'Continuous to following block';
+  }
+}
+
 const precedingParams = [
-  { key: 'test_x_indent', label: '⎡' },
-  { key: 'test_y_reverse', label: '⬓' },
-  { key: 'test_preceding_terminal', label: '⍑' },
+  { key: 'test_x_indent', label: '⎡', title: 'First line indentation' },
+  { key: 'test_y_reverse', label: '⬓', title: 'Vertical gap from preceding (reverse jump)' },
+  { key: 'test_preceding_terminal', label: '⍑', title: 'Preceding block is terminal' },
 ] as const;
 
 const followingParams = [
-  { key: 'test_x_dedent', label: '⎦' },
-  { key: 'test_y_advance', label: '⬒' },
-  { key: 'test_following_terminal', label: '⍊' },
+  { key: 'test_x_dedent', label: '⎦', title: 'Last line dedentation (short line)' },
+  { key: 'test_y_advance', label: '⬒', title: 'Vertical gap to following (advance jump)' },
+  { key: 'test_following_terminal', label: '⍊', title: 'Following block is terminal' },
 ] as const;
 
 function rescan(careaId: string) {
