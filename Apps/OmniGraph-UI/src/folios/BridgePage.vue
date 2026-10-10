@@ -5,12 +5,15 @@
       :page="page"
       :machine-name="machineName"
       :image-base-url="imageBaseUrl"
-      :minimal="minimal"
+      :presentationOnly="presentationOnly"
       :show-block-hints="showBlockHints"
+      :show-tool-info-bars="showToolInfoBars"
+      :show-badges="showBadges"
       hocrLevel="block"
       :interaction-update="interactionUpdate"
       :interaction-click="interactionClick"
       :dim-layers="dimLayers"
+      :zoom-request="{ mode: 'PageBBox', margin: 50}"
     />
   </div>
 </template>
@@ -25,12 +28,14 @@ const props = defineProps<{
   page: Page;
   machineName: string;
   imageBaseUrl: string;
-  minimal?: boolean;
   showBlockHints?: boolean;
+  showToolInfoBars?: boolean;
+  showBadges?: boolean;
+  presentationOnly?: boolean;
   reloadTrigger?: number;
+  dimLayers?: DimLayers;
   interactionUpdate?: PageInteractionUpdate;
   interactionClick?: PageInteractionClick;
-  dimLayers?: DimLayers;
 }>();
 
 // Inject parent context (shared by tools) before providing local context

@@ -33,3 +33,11 @@ export interface PixelRegion {
     bottom: number;  // scan pixels from bottom edge
 }
 
+export type ZoomMode = 'NoZoom' | 'CropRegion' | 'PageBBox' | 'Custom';
+
+export type ZoomRequest =
+    | { mode: 'NoZoom' }
+    | { mode: 'CropRegion'; margin: number }
+    | { mode: 'PageBBox'; margin: number }
+    | { mode: 'Custom'; area: PixelRegion };
+

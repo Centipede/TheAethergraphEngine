@@ -1,12 +1,13 @@
 <template>
-  <div class="page-canvas">
-    <div class="page-canvas-toolbar" v-if="!minimal">
+  <div class="page-canvas" :class="{ 'page-canvas--hide-toolbars': !showToolInfoBars }">
+    <div class="page-canvas-toolbar" v-if="!presentationOnly">
       <sl-checkbox size="small" :checked="showConfidence" @sl-change="showConfidence = $event.target.checked">Confidence</sl-checkbox>
       <sl-checkbox size="small" :checked="applyProcessing" @sl-change="applyProcessing = $event.target.checked">Processing</sl-checkbox>
     </div>
+
     <div
         class="interactive-area"
-        :class="[pointerVisible ? 'cursor-mode-off' : '', minimal ? 'interactive-area--minimal' : '']"
+        :class="[pointerVisible ? 'cursor-mode-off' : '', presentationOnly ? 'interactive-area--presentation-only' : '']"
         @mousemove="updatePointerAction"
         @mouseenter="changePointerState(true)"
         @mouseleave="changePointerState(false)"
@@ -22,6 +23,7 @@
         <div
             ref="imageWrapRef"
             class="page-canvas-image-wrap"
+            :style="imageWrapStyle"
         >
           <img id="scan-image"
                :src="src"
@@ -46,13 +48,12 @@
                class="hocr-overlay"
                :class="[`hocr-overlay--${item.role}`, { 'hocr-overlay--selected': isItemSelected(item.id), 'hocr-overlay--indicated': item.id === indicatedItemId }]"
                :style="overlayItemStyle(item)"
-
           >
             <div v-if="isDimmed(item)"
                  class="hocr-dimmed-overlay" />
 
             <div class="hocr-overlay-item-info"
-                 v-if="item.role === 'active'">
+                 v-if="showBadges && item.role === 'active'">
               <span class="hocr-overlay-item-kind"
                     v-if="item.kind">{{ item.kind }}</span>
               <span class="hocr-overlay-item-lang" v-if="item.lang">[{{ item.lang }}]</span>
@@ -141,7 +142,7 @@
       </div>
 
       <CustomPointer
-          v-if="!minimal"
+          v-if="!presentationOnly"
           :visible="pointerVisible"
           :enabled="pointerSettings?.enabled ?? true"
           :x="pointerX"
@@ -152,7 +153,7 @@
       />
     </div>
 
-    <div class="page-canvas-info" v-if="!minimal">
+    <div class="page-canvas-info" v-if="!presentationOnly">
       <span class="page-canvas-hint">(Index: {{ page.index }})</span>
       <span :class="{ 'page-canvas-unnamed': !page.name }">p. {{ label }}</span>
       <span class="page-canvas-hint">(Scan: {{ page.scan }})</span>
@@ -161,7 +162,7 @@
 </template>
 
 <script setup lang="ts">
-import {computed, inject, ref, type Ref, onMounted} from 'vue';
+import {computed, inject, ref, type Ref} from 'vue';
 import { useHocrContext } from '../composables/useHocr';
 import {
   type PixelRegion,
@@ -183,7 +184,8 @@ import {
   type FlowSchema,
   type LayoutSchema,
   type EditorPalette, type HintType, type PageInteractionClick, type PageInteractionDrag,
-  type DimLayers
+  type DimLayers,
+  type ZoomRequest,
 } from '../types';
 import { DEFAULT_PALETTE } from '../types';
 import {makeVariedPalette, applyColorSpecs} from '../utils/colors';
@@ -207,25 +209,34 @@ const props = withDefaults(defineProps<{
   page: Page;
   machineName: string;
   imageBaseUrl: string;
-  crop?: PixelRegion;
+
+  showBlockHints?: boolean;
+  showToolInfoBars?: boolean;
+  showBadges?: boolean;
   showCropOverlay?: boolean;
+  presentationOnly?: boolean;
+
+  crop?: PixelRegion;
+
   palette?: EditorPalette;
-  hocrLevel?: HocrLevel | null;
   pointerSettings?: PointerSettings;
+  zoomRequest?: ZoomRequest;
+
+  hocrLevel?: HocrLevel | null;
+  careaLayers?: { flow: boolean; layout: boolean };
+  dimLayers?: DimLayers;
+
+  flows?: Record<string, FlowSchema>;
+  layouts?: Record<string, LayoutSchema>;
+
   interactionUpdate?: PageInteractionUpdate;
   interactionClick?: PageInteractionClick;
   interactionDrag?: PageInteractionDrag;
-  flows?: Record<string, FlowSchema>;
-  layouts?: Record<string, LayoutSchema>;
-  careaLayers?: { flow: boolean; layout: boolean };
-  minimal?: boolean;
-  showBlockHints?: boolean;
-  dimLayers?: DimLayers;
 }>(), {
   showCropOverlay: true,
   palette: () => DEFAULT_PALETTE,
   hocrLevel: null,
-  minimal: false,
+  presentationOnly: false,
   showBlockHints: false,
   dimLayers: () => ({
     flows: false,
@@ -233,6 +244,9 @@ const props = withDefaults(defineProps<{
     dimmedFlows: ref(new Set<string>()),
     dimmedLayouts: ref(new Set<string>()),
   }),
+  zoomRequest: () => ({ mode: 'NoZoom' }),
+  showToolInfoBars: true,
+  showBadges: true,
 });
 
 const { hocrPage } = useHocrContext();
@@ -262,8 +276,36 @@ function isItemSelected(id: string) {
   return true;
 }
 
+const imageWrapStyle = computed(() => {
+  const style: any = {
+    aspectRatio: `${viewWidth.value} / ${viewHeight.value}`,
+  };
+  if (props.zoomRequest.mode !== 'NoZoom') {
+    style.width = '100%';
+    style.overflow = 'hidden';
+  }
+  return style;
+});
+
 const imageStyle = computed(() => {
-  return {};
+  if (props.zoomRequest.mode === 'NoZoom') {
+    return {};
+  }
+
+  const widthPct = (props.page.scan_width / viewWidth.value) * 100;
+  const heightPct = (props.page.scan_height / viewHeight.value) * 100;
+
+  const leftPct = -(viewArea.value.left / viewWidth.value) * 100;
+  const topPct = -(viewArea.value.top / viewHeight.value) * 100;
+
+  return {
+    position: 'absolute' as const,
+    left: `${leftPct}%`,
+    top: `${topPct}%`,
+    width: `${widthPct}%`,
+    height: `${heightPct}%`,
+    maxWidth: 'none',
+  };
 });
 
 const label = computed(() => props.page.name || props.page.scan);
@@ -282,6 +324,61 @@ const src = computed(() => {
 
 const imageFrameRef = ref<HTMLElement | null>(null);
 const imageWrapRef = ref<HTMLElement | null>(null);
+
+const hocrBbox = computed((): PixelRegion | null => {
+  const page = hocrPage?.value;
+  if (!page || page.careas.length === 0) return null;
+
+  let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
+  let found = false;
+
+  for (const carea of page.careas) {
+    const [l, t, r, b] = carea.bbox;
+    left = Math.min(left, l);
+    top = Math.min(top, t);
+    right = Math.max(right, r);
+    bottom = Math.max(bottom, b);
+    found = true;
+  }
+
+  return found ? { left, top, right, bottom } : null;
+});
+
+function expandRegion(region: PixelRegion, margin: number): PixelRegion {
+  const left = Math.max(0, region.left - margin);
+  const top = Math.max(0, region.top - margin);
+  const right = Math.min(props.page.scan_width, region.right + margin);
+  const bottom = Math.min(props.page.scan_height, region.bottom + margin);
+
+  return {
+    left,
+    top,
+    right: Math.max(right, left + 1),
+    bottom: Math.max(bottom, top + 1),
+  };
+}
+
+const viewArea = computed((): PixelRegion => {
+  const req = props.zoomRequest;
+  if (req.mode === 'CropRegion' && props.crop) {
+    return expandRegion(props.crop, req.margin);
+  }
+  if (req.mode === 'PageBBox' && hocrBbox.value) {
+    return expandRegion(hocrBbox.value, req.margin);
+  }
+  if (req.mode === 'Custom' && req.area) {
+    return { ...req.area };
+  }
+  return {
+    left: 0,
+    top: 0,
+    right: props.page.scan_width,
+    bottom: props.page.scan_height
+  };
+});
+
+const viewWidth = computed(() => viewArea.value.right - viewArea.value.left);
+const viewHeight = computed(() => viewArea.value.bottom - viewArea.value.top);
 
 const pointerVisible = ref(false);
 const pointerX = ref(0);
@@ -303,10 +400,10 @@ const dragRectStyle = computed(() => {
   const y2 = Math.max(dragStart.value.y, dragCurrent.value.y);
   return {
     position: 'absolute' as const,
-    left: scanXPct(x1),
-    top: scanYPct(y1),
-    width: scanXPct(x2 - x1),
-    height: scanYPct(y2 - y1),
+    left: mapLeftToPct(x1),
+    top: mapTopToPct(y1),
+    width: mapWidthToPct(x2 - x1),
+    height: mapHeightToPct(y2 - y1),
     pointerEvents: 'none' as const,
     zIndex: 10,
   };
@@ -464,10 +561,10 @@ const overlayItems = computed((): OverlayItem[] => {
   return items;
 });
 
-const cropLeft = computed(() => props.crop ? scanXPct(props.crop.left) : '0%');
-const cropTop = computed(() => props.crop ? scanYPct(props.crop.top) : '0%');
-const cropRight = computed(() => props.crop ? scanXPct(props.crop.right) : '0%');
-const cropBottom = computed(() => props.crop ? scanYPct(props.crop.bottom) : '0%');
+const cropLeft = computed(() => props.crop ? mapLeftToPct(props.crop.left) : '0%');
+const cropTop = computed(() => props.crop ? mapTopToPct(props.crop.top) : '0%');
+const cropRight = computed(() => props.crop ? mapRightToPct(props.crop.right) : '0%');
+const cropBottom = computed(() => props.crop ? mapBottomToPct(props.crop.bottom) : '0%');
 
 const cropAreaStyle = computed(() => ({
   position: 'absolute' as const,
@@ -518,7 +615,7 @@ const rightDiscardStyle = computed(() => ({
 }));
 
 function changePointerState(inside: boolean) {
-  if (props.minimal) return;
+  if (props.presentationOnly) return;
   pointerVisible.value = props.pointerSettings ? inside : false;
   if (!inside) {
     dragStart.value = null;
@@ -528,7 +625,7 @@ function changePointerState(inside: boolean) {
 }
 
 function handleMouseDown(e: MouseEvent) {
-  if (props.minimal || !props.interactionDrag) return;
+  if (props.presentationOnly || !props.interactionDrag) return;
   const point = getScanPointForEvent(e);
   if (point) {
     dragStart.value = point;
@@ -538,7 +635,7 @@ function handleMouseDown(e: MouseEvent) {
 }
 
 function handleMouseUp(e: MouseEvent) {
-  if (props.minimal) return;
+  if (props.presentationOnly) return;
   if (isDragging.value && dragStart.value && props.interactionDrag) {
     const point = getScanPointForEvent(e);
     if (point) {
@@ -565,7 +662,7 @@ function updateDragState(event: MouseEvent) {
 }
 
 function updatePointerAction(event: MouseEvent) {
-  if (props.minimal) return;
+  if (props.presentationOnly) return;
 
   pointerX.value = event.clientX;
   pointerY.value = event.clientY;
@@ -647,7 +744,7 @@ function updatePointerAction(event: MouseEvent) {
 }
 
 function performPendingAction() {
-  if (props.minimal) return;
+  if (props.presentationOnly) return;
   if (wasJustDragging.value) {
     wasJustDragging.value = false;
     return;
@@ -672,12 +769,12 @@ function getScanPointForEvent(event: MouseEvent): { x: number; y: number } | nul
   const imageY = clamp(clientY - imageRect.top, 0, imageRect.height);
 
   const scanX = imageRect.width > 0
-      ? Math.round((imageX / imageRect.width) * props.page.scan_width)
-      : 0;
+      ? Math.round((imageX / imageRect.width) * viewWidth.value) + viewArea.value.left
+      : viewArea.value.left;
 
   const scanY = imageRect.height > 0
-      ? Math.round((imageY / imageRect.height) * props.page.scan_height)
-      : 0;
+      ? Math.round((imageY / imageRect.height) * viewHeight.value) + viewArea.value.top
+      : viewArea.value.top;
 
   return {
     x: clamp(scanX, 0, props.page.scan_width),
@@ -689,15 +786,39 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
-function scanXPct(value: number): string {
-  return props.page.scan_width > 0
-      ? `${(value / props.page.scan_width) * 100}%`
+function mapLeftToPct(value: number): string {
+  return viewWidth.value > 0
+      ? `${((value - viewArea.value.left) / viewWidth.value) * 100}%`
       : '0%';
 }
 
-function scanYPct(value: number): string {
-  return props.page.scan_height > 0
-      ? `${(value / props.page.scan_height) * 100}%`
+function mapTopToPct(value: number): string {
+  return viewHeight.value > 0
+      ? `${((value - viewArea.value.top) / viewHeight.value) * 100}%`
+      : '0%';
+}
+
+function mapRightToPct(value: number): string {
+  return viewWidth.value > 0
+      ? `${((viewArea.value.right - value) / viewWidth.value) * 100}%`
+      : '0%';
+}
+
+function mapBottomToPct(value: number): string {
+  return viewHeight.value > 0
+      ? `${((viewArea.value.bottom - value) / viewHeight.value) * 100}%`
+      : '0%';
+}
+
+function mapWidthToPct(value: number): string {
+  return viewWidth.value > 0
+      ? `${(value / viewWidth.value) * 100}%`
+      : '0%';
+}
+
+function mapHeightToPct(value: number): string {
+  return viewHeight.value > 0
+      ? `${(value / viewHeight.value) * 100}%`
       : '0%';
 }
 
@@ -754,10 +875,10 @@ function hintStyle(hint: Hint) {
   const color = getHintColor(hint.type);
   return {
     position: 'absolute' as const,
-    left: scanXPct(hint.area.left),
-    top: scanYPct(hint.area.top),
-    width: scanXPct(hint.area.right - hint.area.left),
-    height: scanYPct(hint.area.bottom - hint.area.top),
+    left: mapLeftToPct(hint.area.left),
+    top: mapTopToPct(hint.area.top),
+    right: mapRightToPct(hint.area.right),
+    bottom: mapBottomToPct(hint.area.bottom),
     pointerEvents: 'none' as const,
     border: `1px solid ${color}`,
     background: `color-mix(in srgb, ${color} 40%, transparent)`
@@ -768,10 +889,10 @@ function overlayItemStyle(item: OverlayItem) {
   const [l, t, r, b] = item.bbox;
   const style: any = {
     position: 'absolute' as const,
-    left: scanXPct(l),
-    top: scanYPct(t),
-    width: scanXPct(r - l),
-    height: scanYPct(b - t),
+    left: mapLeftToPct(l),
+    top: mapTopToPct(t),
+    width: mapWidthToPct(r - l),
+    height: mapHeightToPct(b - t),
     '--hocr-color': item.color,
   };
 
@@ -867,6 +988,35 @@ function overlayItemStyle(item: OverlayItem) {
   padding: 1rem;
 }
 
+.page-canvas--hide-toolbars .page-canvas-image-frame {
+  padding: 5px;
+}
+
+.page-canvas--hide-toolbars .page-canvas-toolbar,
+.page-canvas--hide-toolbars .page-canvas-info {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 20;
+  opacity: 0;
+  transition: opacity 0.2s;
+  pointer-events: none;
+}
+
+.page-canvas--hide-toolbars .page-canvas-toolbar {
+  top: 0;
+}
+
+.page-canvas--hide-toolbars .page-canvas-info {
+  bottom: 0;
+}
+
+.page-canvas--hide-toolbars:hover .page-canvas-toolbar,
+.page-canvas--hide-toolbars:hover .page-canvas-info {
+  opacity: 1;
+  pointer-events: auto;
+}
+
 .page-canvas-image-wrap {
   position: relative;
   max-width: 100%;
@@ -913,6 +1063,8 @@ function overlayItemStyle(item: OverlayItem) {
 }
 
 .hocr-overlay {
+  --hocr-color: transparent;
+  --info-display: none;
   box-sizing: border-box;
 }
 
@@ -970,12 +1122,14 @@ function overlayItemStyle(item: OverlayItem) {
 }
 
 /* N-1: parent context — faint dashed outline, no fill, interactive on hover */
+/*noinspection CssUnusedSymbol*/
 .hocr-overlay--parent {
   outline: 2px dotted var(--hocr-color);
   outline-offset: 0.2rem;
   opacity: 1;
 }
 
+/*noinspection CssUnusedSymbol*/
 .hocr-overlay--parent:hover {
   outline: 2px dotted var(--hocr-color) !important;
   background: color-mix(in srgb, var(--hocr-color) 10%, transparent) !important;
@@ -983,6 +1137,7 @@ function overlayItemStyle(item: OverlayItem) {
 }
 
 /* N: active level — solid outline + translucent fill */
+/*noinspection CssUnusedSymbol*/
 .hocr-overlay--active {
   outline: 2px solid var(--hocr-color);
   background: color-mix(in srgb, var(--hocr-color) 15%, transparent);
@@ -990,6 +1145,7 @@ function overlayItemStyle(item: OverlayItem) {
 }
 
 /* N: active level — solid outline + translucent fill */
+/*noinspection CssUnusedSymbol*/
 .hocr-overlay--active:hover {
   outline: 2px solid var(--hocr-color) !important;
   background: color-mix(in srgb, var(--hocr-color) 45%, transparent) !important;

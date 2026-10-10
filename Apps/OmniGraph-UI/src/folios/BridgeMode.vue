@@ -31,7 +31,9 @@
               :machine-name="machineName"
               :image-base-url="scanBaseUrl"
               :palette="palette"
-              :minimal="page.index !== currentPageIndex"
+              :presentation-only="page.index !== currentPageIndex"
+              :show-tool-info-bars="false"
+              :show-badges="false"
               :show-block-hints="true"
               :reload-trigger="hocrReloadTrigger[page.scan.replace(/\.[^.]+$/, '')]"
               :interaction-update="makeInteractionUpdateHandler(page)"
@@ -47,14 +49,18 @@
       <BridgeDetectionTools
           :selected-block-id="selectedBlockId"
           :project="project"
+          :thresholds="thresholds"
           v-model:flowSet="flowSet"
+          @threshold-change="onThresholdChange"
+          @auto-bridge-page="onAutoBridgePage"
+          @auto-bridge-block="onAutoBridgeBlock"
       />
     </template>
   </PageWorkspace>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed, provide } from 'vue';
+import { ref, onMounted, onUnmounted, computed, provide, reactive } from 'vue';
 import PageWorkspace from '../components/PageWorkspace.vue';
 import BridgePage from './BridgePage.vue';
 import BridgeDetectionTools from '../components/BridgeDetectionTools.vue';
@@ -63,6 +69,8 @@ import { usePanelVisibilityContext } from '../composables/usePanelVisibility';
 import { provideHocrContext } from '../composables/useHocr';
 import type {HocrNode, OverlayItem, Page, Project, PageInteractionUpdate, DimLayers} from '../types';
 import { DEFAULT_PALETTE } from '../types';
+import type { DetectionThresholds } from '../types/hocr';
+import { findMultilevelById } from '../types/hocr';
 
 const props = defineProps<{
   machineName: string;
@@ -87,6 +95,38 @@ const selectedItemIds = computed(() => {
   }
   return ids;
 });
+
+const thresholds = reactive<DetectionThresholds>({
+  x_indent: { certainly_true: 15, suggested_true: 10, suggested_false: 5, certainly_false: 2 },
+  x_dedent: { certainly_true: 20, suggested_true: 10, suggested_false: 5, certainly_false: 0 },
+  y_advance: { certainly_true: 10, suggested_true: 5, suggested_false: 2, certainly_false: 0 },
+  use_x_indent: true,
+  use_x_dedent: true,
+  use_y_advance: true,
+  use_hyphenation: true,
+});
+
+// Load from local storage if available
+const STORAGE_KEY = 'omnigraph-detection-thresholds';
+const saved = localStorage.getItem(STORAGE_KEY);
+if (saved) {
+  try {
+    const data = JSON.parse(saved);
+    // Simple migration: if it has x_indent_min but not x_indent, it's old
+    if (data.x_indent_min !== undefined && data.x_indent === undefined) {
+      data.x_indent = { certainly_true: data.x_indent_max, suggested_true: data.x_indent_min, suggested_false: data.x_indent_min - 1, certainly_false: Math.max(0, data.x_indent_min - 2) };
+      data.x_dedent = { certainly_true: data.x_dedent_max, suggested_true: data.x_dedent_min, suggested_false: data.x_dedent_min - 1, certainly_false: Math.max(0, data.x_dedent_min - 2) };
+      data.y_advance = { certainly_true: data.y_advance_max, suggested_true: data.y_advance_min, suggested_false: data.y_advance_min - 1, certainly_false: Math.max(0, data.y_advance_min - 2) };
+    }
+    Object.assign(thresholds, data);
+  } catch (e) {
+    console.error('Failed to parse saved thresholds', e);
+  }
+}
+
+function onThresholdChange() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(thresholds));
+}
 
 provide('selectedItemIds', selectedItemIds);
 provide('selectedPageScan', selectedPageScan);
@@ -150,6 +190,16 @@ async function toggleHint(hintName: string) {
 }
 
 function onKeyDown(e: KeyboardEvent) {
+  if (e.key === 'p') {
+    e.preventDefault();
+    void onAutoBridgePage();
+    return true;
+  }
+  if (e.key === 'b') {
+    e.preventDefault();
+    void onAutoBridgeBlock();
+    return true;
+  }
   if (e.key === 'ArrowUp') {
     e.preventDefault();
     void toggleHint('continue_from_previous');
@@ -205,7 +255,23 @@ const { setActivePanels } = usePanelVisibilityContext();
 // Provide HOCR context for PageWorkspace and general use. BridgeMode is special in that it works with multiple pages at once.
 // But still there is a primary page relevant, namely the one in the center of the viewport, which is also the current page.
 // Note though, that each inlined BridgePage uses its own HOCR context, which is loaded on demand.
-provideHocrContext({ block_metrics: true });
+const hocrContext = provideHocrContext({ block_metrics: true });
+
+async function onAutoBridgePage() {
+  await hocrContext.autoBridgePage(thresholds, flowSet.value);
+}
+
+async function onAutoBridgeBlock() {
+  if (selectedBlockId.value && hocrContext.hocrPage.value) {
+    const multi = findMultilevelById(hocrContext.hocrPage.value, selectedBlockId.value);
+    const careaFlow = multi?.carea?.flow;
+    if (careaFlow && !flowSet.value.has(careaFlow)) {
+      alert(`The selected block belongs to flow "${careaFlow}", which is currently inactive. Please activate this flow to use Auto Block.`);
+      return;
+    }
+    await hocrContext.autoBridgeBlock(selectedBlockId.value, thresholds, flowSet.value);
+  }
+}
 
 onMounted(() => {
   setActivePanels(panels);
@@ -289,8 +355,12 @@ function getPageStyle(pageIndex: number, currentIdx: number | null) {
 
 .bridge-page-wrapper {
   box-sizing: border-box;
-  padding: 0.5rem;
+  padding: 2px;
   display: flex;
   flex-direction: column;
+}
+
+.bridge-page-wrapper :deep(.page-canvas-image-frame) {
+  padding: 2px;
 }
 </style>

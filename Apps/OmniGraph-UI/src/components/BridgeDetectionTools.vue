@@ -91,20 +91,24 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, computed } from 'vue';
+import { computed } from 'vue';
 import { useHocrContext } from '../composables/useHocr';
 import type { DetectionThresholds, HocrBlock } from '../types/hocr';
-import { findItem, findMultilevelById } from '../types/hocr';
+import { findItem } from '../types/hocr';
 import type { Project } from '../types/project';
 
 const props = defineProps<{
   selectedBlockId: string | null;
   project: Project | null;
   flowSet: Set<string>;
+  thresholds: DetectionThresholds;
 }>();
 
 const emit = defineEmits<{
   (e: 'update:flowSet', flowSet: Set<string>): void;
+  (e: 'threshold-change'): void;
+  (e: 'auto-bridge-page'): void;
+  (e: 'auto-bridge-block'): void;
 }>();
 
 const hocrContext = useHocrContext();
@@ -128,52 +132,16 @@ const selectedBlock = computed(() => {
   return null;
 });
 
-const thresholds = reactive<DetectionThresholds>({
-  x_indent: { certainly_true: 15, suggested_true: 10, suggested_false: 5, certainly_false: 2 },
-  x_dedent: { certainly_true: 20, suggested_true: 10, suggested_false: 5, certainly_false: 0 },
-  y_advance: { certainly_true: 10, suggested_true: 5, suggested_false: 2, certainly_false: 0 },
-  use_x_indent: true,
-  use_x_dedent: true,
-  use_y_advance: true,
-  use_hyphenation: true,
-});
-
-// Load from local storage if available
-const STORAGE_KEY = 'omnigraph-detection-thresholds';
-const saved = localStorage.getItem(STORAGE_KEY);
-if (saved) {
-  try {
-    const data = JSON.parse(saved);
-    // Simple migration: if it has x_indent_min but not x_indent, it's old
-    if (data.x_indent_min !== undefined && data.x_indent === undefined) {
-      data.x_indent = { certainly_true: data.x_indent_max, suggested_true: data.x_indent_min, suggested_false: data.x_indent_min - 1, certainly_false: Math.max(0, data.x_indent_min - 2) };
-      data.x_dedent = { certainly_true: data.x_dedent_max, suggested_true: data.x_dedent_min, suggested_false: data.x_dedent_min - 1, certainly_false: Math.max(0, data.x_dedent_min - 2) };
-      data.y_advance = { certainly_true: data.y_advance_max, suggested_true: data.y_advance_min, suggested_false: data.y_advance_min - 1, certainly_false: Math.max(0, data.y_advance_min - 2) };
-    }
-    Object.assign(thresholds, data);
-  } catch (e) {
-    console.error('Failed to parse saved thresholds', e);
-  }
-}
-
 function onThresholdChange() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(thresholds));
+  emit('threshold-change');
 }
 
 async function onAutoBridgePage() {
-  await hocrContext.autoBridgePage(thresholds, props.flowSet);
+  emit('auto-bridge-page');
 }
 
 async function onAutoBridgeBlock() {
-  if (props.selectedBlockId && hocrContext.hocrPage.value) {
-    const multi = findMultilevelById(hocrContext.hocrPage.value, props.selectedBlockId);
-    const careaFlow = multi?.carea?.flow;
-    if (careaFlow && !props.flowSet.has(careaFlow)) {
-      alert(`The selected block belongs to flow "${careaFlow}", which is currently inactive. Please activate this flow to use Auto Block.`);
-      return;
-    }
-    await hocrContext.autoBridgeBlock(props.selectedBlockId, thresholds, props.flowSet);
-  }
+  emit('auto-bridge-block');
 }
 </script>
 
