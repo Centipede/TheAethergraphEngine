@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-The OmniGraph Engine is an automatic system for ingestion, transcription, and indexing of scanned books and documents. It preserves physical layout, structural hierarchy (chapters/subchapters/footnotes), and enables flexible search (vector, PostgreSQL FTS, selective chapter inclusion). An interactive UI allows manual correction of OCR errors.
+The AetherGraph Engine is an automatic system for ingestion, transcription, and indexing of scanned books and documents. It preserves physical layout, structural hierarchy (chapters/subchapters/footnotes), and enables flexible search (vector, PostgreSQL FTS, selective chapter inclusion). An interactive UI allows manual correction of OCR errors.
 
 The author has a working but non-public Django/PostgreSQL/BeautifulSoup prototype (hOCR processing) that this project rewrites for public release.
 
@@ -16,15 +16,15 @@ In development. Stack chosen: Rust/Axum backend + Vue 3/Vite frontend.
 
 Two apps under `Apps/`:
 
-**`Apps/OmniGraph/`** — Rust/Axum web server (port 8080)
+**`Apps/AetherGraph/`** — Rust/Axum web server (port 8080)
 - `src/main.rs` — entry point, binds listener
 - `src/state.rs` — `AppState` (holds `projects_dir: PathBuf`, read from `PROJECTS_DIR` env var, defaults to `./projects`)
 - `src/routes/mod.rs` — combines API router with static file fallback; `build_router()` is the entry point
 - `src/routes/projects/` — project handlers, models, storage, forms, images
 - `static/` — Vue production build output goes here (gitignored); embedded into binary via `rust-embed` at compile time
 
-**`Apps/OmniGraph-UI/`** — Vue 3 + TypeScript + Vite (dev port 5173)
-- `vite.config.ts` — `build.outDir` points to `../OmniGraph/static`; `/api` proxied to `http://127.0.0.1:8080` in dev
+**`Apps/AetherGraph-UI/`** — Vue 3 + TypeScript + Vite (dev port 5173)
+- `vite.config.ts` — `build.outDir` points to `../AetherGraph/static`; `/api` proxied to `http://127.0.0.1:8080` in dev
 
 The Ingestor handles scanned image/PDF ingestion, page naming, and section structure creation. See [Documentation/Planning/Ingestor.md](Documentation/Planning/Ingestor.md) for full spec.
 
@@ -32,17 +32,17 @@ The Ingestor handles scanned image/PDF ingestion, page naming, and section struc
 
 ## Development Commands
 
-**Rust server** (from `Apps/OmniGraph/`):
+**Rust server** (from `Apps/AetherGraph/`):
 ```bash
 cargo build           # compile
 cargo run             # run on http://127.0.0.1:8080
 cargo watch -x run    # auto-restart on file changes (install: cargo install cargo-watch)
 ```
 
-**Vue frontend** (from `Apps/OmniGraph-UI/`):
+**Vue frontend** (from `Apps/AetherGraph-UI/`):
 ```bash
 npm run dev     # dev server with HMR on http://localhost:5173
-npm run build   # compile into Apps/OmniGraph/static/ (do before cargo build for production)
+npm run build   # compile into Apps/AetherGraph/static/ (do before cargo build for production)
 ```
 
 **Production build order:** `npm run build` → `cargo build --release`
