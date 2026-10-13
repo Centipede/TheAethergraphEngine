@@ -5,7 +5,7 @@ use axum::http::StatusCode;
 use secrecy::Secret;
 use crate::app_settings::OcrServerConfig;
 use crate::ocr_poll::OcrServerStatus;
-use crate::routes::projects::forms::{OcrServerData, SettingsResponse, SettingsUpdate};
+use crate::routes::projects::forms::{OcrServerData, ScanJobStatus, SettingsResponse, SettingsUpdate};
 use crate::routes::projects::models::{Page, PageDb, Project, StructureDb};
 use crate::state::AppState;
 
@@ -245,4 +245,25 @@ pub fn has_unsaved_edits(projects_dir: &PathBuf, machine_name: &str, scan: &str)
         (Ok(e), Ok(o)) => e != o,
         _ => false,
     }
+}
+
+pub fn job_status_path(projects_dir: &Path, machine_name: &str) -> PathBuf {
+    projects_dir.join(machine_name).join("metadata").join("job-ocr-scan.json")
+}
+
+pub fn save_job_status(projects_dir: &Path, machine_name: &str, status: &ScanJobStatus) -> std::io::Result<()> {
+    let path = job_status_path(projects_dir, machine_name);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let json = serde_json::to_string_pretty(status)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    fs::write(path, json)
+}
+
+pub fn load_job_status(projects_dir: &Path, machine_name: &str) -> Option<ScanJobStatus> {
+    let path = job_status_path(projects_dir, machine_name);
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
 }

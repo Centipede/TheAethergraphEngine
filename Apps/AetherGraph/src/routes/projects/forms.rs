@@ -59,11 +59,28 @@ pub struct RescanRequest {
     pub language: String,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, Clone)]
 pub struct ScanPageResult {
     pub scan: String,
     pub success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Deserialize, Serialize, Clone, PartialEq)]
+pub enum JobState {
+    Running,
+    Completed,
+    Failed,
+    Cancelled,
+}
+
+#[derive(Deserialize, Serialize, Clone)]
+pub struct ScanJobStatus {
+    pub total_pages: usize,
+    pub processed_pages: usize,
+    pub status: JobState,
+    pub results: Vec<ScanPageResult>,
     pub error: Option<String>,
 }
 

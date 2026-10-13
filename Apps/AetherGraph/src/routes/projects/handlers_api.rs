@@ -1,10 +1,10 @@
 use crate::ocr_poll::ServerStatus;
 use crate::routes::projects::forms::{
     CreateProject, IngestQuery, RemoveRequest, ScanConflict, ScanPageResult, ScanRequest,
-    ScanResponse, SettingsUpdate, AutoAssistRequest, AutoBridgeRequest,
+    SettingsUpdate, AutoAssistRequest, AutoBridgeRequest,
+    ScanJobStatus, JobState,
 };
 use crate::routes::projects::models::{IMPORT_ORDER_GAP, Page, PageDb, StructureDb, HintType};
-use crate::routes::projects::storage::hocr_edited_path;
 use crate::routes::projects::{images, storage};
 use crate::state::AppState;
 use crate::hocr_parser::ParserConfig;
@@ -364,19 +364,234 @@ pub async fn get_hocr_status(
     Json(serde_json::json!({ "scanned": scanned }))
 }
 
+async fn run_scan_job(
+    state: AppState,
+    machine_name: String,
+    pages: Vec<Page>,
+    language: String,
+    processing_settings: Option<crate::routes::projects::models::ProcessingSettings>,
+    server: crate::app_settings::OcrServerConfig,
+) {
+    let projects_dir = state.projects_dir();
+    let total_pages = pages.len();
+
+    let mut job_status = ScanJobStatus {
+        total_pages,
+        processed_pages: 0,
+        status: JobState::Running,
+        results: Vec::new(),
+        error: None,
+    };
+
+    // Initial save
+    let _ = storage::save_job_status(&projects_dir, &machine_name, &job_status);
+
+    let scans_dir = projects_dir
+        .join(&machine_name)
+        .join("pages")
+        .join("scans");
+
+    for page in pages {
+        // Read and process image
+        let raw = match tokio::fs::read(scans_dir.join(&page.scan)).await {
+            Ok(b) => b,
+            Err(e) => {
+                job_status.status = JobState::Failed;
+                job_status.error = Some(format!("failed to read {}: {}", page.scan, e));
+                let _ = storage::save_job_status(&projects_dir, &machine_name, &job_status);
+                break;
+            }
+        };
+
+        let crop = page.crop_edges;
+        let hints = page.hints.clone();
+        let scan_name = page.scan.clone();
+        let settings = processing_settings.clone();
+
+        let bytes_result = tokio::task::spawn_blocking(move || {
+            crate::image_utils::apply_crop_mask(&raw, crop, settings.as_ref(), &hints)
+        })
+        .await;
+
+        let bytes = match bytes_result {
+            Ok(Ok(b)) => b,
+            Ok(Err(e)) => {
+                job_status.results.push(ScanPageResult {
+                    scan: scan_name,
+                    success: false,
+                    error: Some(format!("failed to mask: {}", e)),
+                });
+                job_status.processed_pages += 1;
+                let _ = storage::save_job_status(&projects_dir, &machine_name, &job_status);
+                continue;
+            }
+            Err(_) => {
+                job_status.results.push(ScanPageResult {
+                    scan: scan_name,
+                    success: false,
+                    error: Some("image task panicked".to_string()),
+                });
+                job_status.processed_pages += 1;
+                let _ = storage::save_job_status(&projects_dir, &machine_name, &job_status);
+                continue;
+            }
+        };
+
+        // Call OCR for THIS page
+        let ocr_result = crate::ocr_client::call_ocr_service(
+            &server,
+            vec![(page.scan.clone(), bytes)],
+            &language,
+        )
+        .await;
+
+        match ocr_result {
+            Ok(mut results) if !results.is_empty() => {
+                let ocr = results.remove(0);
+                if let Some(original_hocr) = ocr.hocr {
+                    // Process hOCR (inject dropcaps/images)
+                    let hints = page.hints.clone();
+                    let hocr_to_save = if hints.iter().any(|h| {
+                        matches!(h.hint_type, HintType::DropCap { .. })
+                            || matches!(h.hint_type, HintType::Image)
+                    }) {
+                        let hocr_str = original_hocr.clone();
+                        let processed = tokio::task::spawn_blocking(move || {
+                            let mut hocr_page =
+                                crate::hocr_parser::parse(&hocr_str, ParserConfig::default())?;
+                            let mut dropcaps = Vec::new();
+                            let mut images = Vec::new();
+                            for h in hints {
+                                match h.hint_type {
+                                    HintType::DropCap { letter } => {
+                                        dropcaps.push(crate::hocr_parser::DropCapInjection {
+                                            text: letter,
+                                            bbox: crate::hocr_parser::HocrBbox([
+                                                h.area.left as i32,
+                                                h.area.top as i32,
+                                                h.area.right as i32,
+                                                h.area.bottom as i32,
+                                            ]),
+                                        });
+                                    }
+                                    HintType::Image => {
+                                        images.push(crate::hocr_parser::HocrBbox([
+                                            h.area.left as i32,
+                                            h.area.top as i32,
+                                            h.area.right as i32,
+                                            h.area.bottom as i32,
+                                        ]));
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            if !dropcaps.is_empty() {
+                                hocr_page.inject_dropcaps(dropcaps);
+                            }
+                            if !images.is_empty() {
+                                hocr_page.inject_images(images);
+                            }
+                            Some(hocr_page.to_hocr_html())
+                        })
+                        .await;
+                        match processed {
+                            Ok(Some(html)) => html,
+                            _ => original_hocr,
+                        }
+                    } else {
+                        original_hocr
+                    };
+
+                    match storage::save_hocr_original(
+                        &projects_dir,
+                        &machine_name,
+                        &page.scan,
+                        &hocr_to_save,
+                    ) {
+                        Ok(()) => {
+                            let edited_path = storage::hocr_edited_path(
+                                &projects_dir,
+                                &machine_name,
+                                &page.scan,
+                            );
+                            let _ = tokio::fs::remove_file(edited_path).await;
+                            job_status.results.push(ScanPageResult {
+                                scan: page.scan.clone(),
+                                success: true,
+                                error: None,
+                            });
+                        }
+                        Err(e) => {
+                            job_status.results.push(ScanPageResult {
+                                scan: page.scan.clone(),
+                                success: false,
+                                error: Some(e.to_string()),
+                            });
+                        }
+                    }
+                } else {
+                    job_status.results.push(ScanPageResult {
+                        scan: page.scan.clone(),
+                        success: false,
+                        error: ocr.error,
+                    });
+                }
+            }
+            Ok(_) => {
+                job_status.results.push(ScanPageResult {
+                    scan: page.scan.clone(),
+                    success: false,
+                    error: Some("No results from OCR service".to_string()),
+                });
+            }
+            Err(e) => {
+                job_status.results.push(ScanPageResult {
+                    scan: page.scan.clone(),
+                    success: false,
+                    error: Some(e),
+                });
+            }
+        }
+
+        job_status.processed_pages += 1;
+        let _ = storage::save_job_status(&projects_dir, &machine_name, &job_status);
+    }
+
+    if job_status.status == JobState::Running {
+        job_status.status = JobState::Completed;
+        let _ = storage::save_job_status(&projects_dir, &machine_name, &job_status);
+    }
+
+    // Clean up active job handle
+    let mut active_jobs = state.active_jobs.write().unwrap();
+    active_jobs.remove(&machine_name);
+}
+
 pub async fn scan_pages_post(
     State(state): State<AppState>,
     Path(machine_name): Path<String>,
     Json(payload): Json<ScanRequest>,
 ) -> impl IntoResponse {
+    // Check if job is already running
+    {
+        let active_jobs = state.active_jobs.read().unwrap();
+        if active_jobs.contains_key(&machine_name) {
+            return (
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({"error": "a scan job is already running for this project"})),
+            )
+                .into_response();
+        }
+    }
+
     // Load pagedb and resolve the requested pages by index
     let pagedb_path = state.project_pagesdb_path(&machine_name);
     let pagedb = storage::load_page_db(&pagedb_path);
 
-    let pages: Vec<_> = payload
+    let pages: Vec<Page> = payload
         .indices
         .iter()
-        .filter_map(|&idx| pagedb.pages.iter().find(|p| p.index == idx))
+        .filter_map(|&idx| pagedb.pages.iter().find(|p| p.index == idx).cloned())
         .collect();
 
     if pages.is_empty() {
@@ -438,167 +653,79 @@ pub async fn scan_pages_post(
     };
     let processing_settings = project.processing.clone();
 
-    // Read scan files from disk and apply pipeline (crop margins + processing settings)
-    let scans_dir = state
-        .projects_dir
-        .join(&machine_name)
-        .join("pages")
-        .join("scans");
-    let mut scan_files: Vec<(String, Vec<u8>)> = Vec::new();
-
-    for page in &pages {
-        let raw = match tokio::fs::read(scans_dir.join(&page.scan)).await {
-            Ok(b) => b,
-            Err(e) => return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": format!("failed to read {}: {}", page.scan, e)})),
-            )
-                .into_response(),
-        };
-
-        let crop = page.crop_edges;
-        let hints = page.hints.clone();
-        let scan_name = page.scan.clone();
-        let settings = processing_settings.clone();
-        let bytes = match tokio::task::spawn_blocking(move || {
-            crate::image_utils::apply_crop_mask(&raw, crop, settings.as_ref(), &hints)
-        })
-        .await
-        {
-            Ok(Ok(b)) => b,
-            Ok(Err(e)) => return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({"error": format!("failed to mask {}: {}", scan_name, e)})),
-            )
-                .into_response(),
-            Err(_) => return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(
-                    serde_json::json!({"error": format!("image task panicked for {}", scan_name)}),
-                ),
-            )
-                .into_response(),
-        };
-
-        scan_files.push((page.scan.clone(), bytes));
-    }
-
-    // Call OCR service
-    let ocr_results = match crate::ocr_client::call_ocr_service(&server, scan_files, &payload.language).await {
-        Ok(r) => r,
-        Err(e) => {
-            return (
-                StatusCode::BAD_GATEWAY,
-                Json(serde_json::json!({"error": e})),
-            )
-                .into_response();
-        }
+    let job_status = ScanJobStatus {
+        total_pages: pages.len(),
+        processed_pages: 0,
+        status: JobState::Running,
+        results: Vec::new(),
+        error: None,
     };
 
-    // Save each hOCR result and build the response
-    let mut results: Vec<ScanPageResult> = Vec::new();
+    // Spawn job
+    let handle = tokio::spawn(run_scan_job(
+        state.clone(),
+        machine_name.clone(),
+        pages,
+        payload.language,
+        processing_settings,
+        server,
+    ));
 
-    for ocr in ocr_results {
-        let page = pages.iter().find(|p| p.scan == ocr.upload_name);
-        let Some(page) = page else { continue };
+    // Store handle
+    {
+        let mut active_jobs = state.active_jobs.write().unwrap();
+        active_jobs.insert(machine_name, handle.abort_handle());
+    }
 
-        if let Some(original_hocr) = ocr.hocr {
-            let hocr_to_save = if page.hints.iter().any(|h| {
-                matches!(h.hint_type, HintType::DropCap { .. })
-                    || matches!(h.hint_type, HintType::Image)
-            }) {
-                let hints = page.hints.clone();
-                let hocr_str = original_hocr.clone();
-                let result = tokio::task::spawn_blocking(move || {
-                    let mut hocr_page = crate::hocr_parser::parse(&hocr_str, ParserConfig::default())?;
-                    let mut dropcaps = Vec::new();
-                    let mut images = Vec::new();
+    Json(job_status).into_response()
+}
 
-                    for h in hints {
-                        match h.hint_type {
-                            HintType::DropCap { letter } => {
-                                dropcaps.push(crate::hocr_parser::DropCapInjection {
-                                    text: letter,
-                                    bbox: crate::hocr_parser::HocrBbox([
-                                        h.area.left as i32,
-                                        h.area.top as i32,
-                                        h.area.right as i32,
-                                        h.area.bottom as i32,
-                                    ]),
-                                });
-                            }
-                            HintType::Image => {
-                                images.push(crate::hocr_parser::HocrBbox([
-                                    h.area.left as i32,
-                                    h.area.top as i32,
-                                    h.area.right as i32,
-                                    h.area.bottom as i32,
-                                ]));
-                            }
-                            _ => {}
-                        }
-                    }
-
-                    if !dropcaps.is_empty() {
-                        hocr_page.inject_dropcaps(dropcaps);
-                    }
-                    if !images.is_empty() {
-                        hocr_page.inject_images(images);
-                    }
-
-                    Some(hocr_page.to_hocr_html())
-                })
-                .await;
-                match result {
-                    Ok(Some(processed_hocr)) => processed_hocr,
-                    _ => original_hocr,
+pub async fn scan_pages_get(
+    State(state): State<AppState>,
+    Path(machine_name): Path<String>,
+) -> impl IntoResponse {
+    let projects_dir = state.projects_dir();
+    match storage::load_job_status(&projects_dir, &machine_name) {
+        Some(mut status) => {
+            if status.status == JobState::Running {
+                let active_jobs = state.active_jobs.read().unwrap();
+                if !active_jobs.contains_key(&machine_name) {
+                    // Job is marked running in file but no handle in memory -> server restart
+                    status.status = JobState::Failed;
+                    status.error = Some("Job interrupted by server restart".to_string());
+                    let _ = storage::save_job_status(&projects_dir, &machine_name, &status);
                 }
-            } else {
-                original_hocr
-            };
-
-            match storage::save_hocr_original(
-                &state.projects_dir,
-                &machine_name,
-                &page.scan,
-                &hocr_to_save,
-            )
-            {
-                Ok(()) => {
-                    // For now we delete any edited hOCRs when we save a new hOCR.
-                    // The user has accepted that by now.
-                    let edited_path =
-                        hocr_edited_path(&state.projects_dir, &machine_name, &page.scan);
-                    match fs::remove_file(edited_path).await {
-                        Ok(()) => {}
-                        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-                        Err(e) => return (
-                            StatusCode::INTERNAL_SERVER_ERROR,
-                            Json(serde_json::json!({"error": format!("failed to delete edited hOCR: {}", e)})),
-                        ).into_response(),
-                    }
-                    results.push(ScanPageResult {
-                        scan: page.scan.clone(),
-                        success: true,
-                        error: None,
-                    })
-                }
-                Err(e) => results.push(ScanPageResult {
-                    scan: page.scan.clone(),
-                    success: false,
-                    error: Some(e.to_string()),
-                }),
             }
-        } else {
-            results.push(ScanPageResult {
-                scan: page.scan.clone(),
-                success: false,
-                error: ocr.error,
-            });
+            Json(status).into_response()
+        }
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+pub async fn scan_pages_delete(
+    State(state): State<AppState>,
+    Path(machine_name): Path<String>,
+) -> impl IntoResponse {
+    let projects_dir = state.projects_dir();
+
+    // Abort the task if it's running
+    {
+        let mut active_jobs = state.active_jobs.write().unwrap();
+        if let Some(handle) = active_jobs.remove(&machine_name) {
+            handle.abort();
         }
     }
 
-    Json(ScanResponse { results }).into_response()
+    // Update status file to "Cancelled"
+    if let Some(mut status) = storage::load_job_status(&projects_dir, &machine_name) {
+        if status.status == JobState::Running {
+            status.status = JobState::Cancelled;
+            let _ = storage::save_job_status(&projects_dir, &machine_name, &status);
+        }
+        Json(status).into_response()
+    } else {
+        StatusCode::NOT_FOUND.into_response()
+    }
 }
 
 pub async fn get_project_pagesdb(

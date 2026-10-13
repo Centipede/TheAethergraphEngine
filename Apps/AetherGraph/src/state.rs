@@ -5,9 +5,11 @@ use minijinja::{Environment, Value};
 use minijinja_autoreload::AutoReloader;
 use rust_embed::RustEmbed;
 use std::{
+    collections::HashMap,
     path::PathBuf,
     sync::{Arc, RwLock},
 };
+use tokio::task::AbortHandle;
 
 #[derive(RustEmbed)]
 #[folder = "templates/"]
@@ -21,6 +23,7 @@ pub struct AppState {
     pub secrets: Arc<RwLock<AppSecrets>>,
     pub settings: Arc<RwLock<AppSettings>>,
     pub ocr_status: Arc<RwLock<OcrServerStatus>>,
+    pub active_jobs: Arc<RwLock<HashMap<String, AbortHandle>>>,
 }
 
 impl AppState {
@@ -144,6 +147,7 @@ impl AppState {
             secrets: Arc::new(RwLock::new(crate::secrets::load())),
             settings,
             ocr_status,
+            active_jobs: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 }
