@@ -1,4 +1,4 @@
-# The OmniGraph Engine
+# The AetherGraph Engine
 
 **Status September 9th 2026: latest 'main' is usable as a per-page hOCR editor**
 
@@ -69,5 +69,5 @@ naming fun.
 As I already have a test project working, I will take an approach that is unusual in the public sphere:
 I will write **planning documents** that aim at summing up all the lessons I have learned.
 
-[OmniGraph](Documentation/Planning/OmniGraph.md)
+[AetherGraph](Documentation/Planning/AetherGraph.md)
 

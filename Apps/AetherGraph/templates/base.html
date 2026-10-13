@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}AetherGraph{% endblock %}</title>
+
+  <!-- HTMX -->
+  <script src="https://unpkg.com/htmx.org@2.0.3" integrity="sha384-0895/pl2MU10Hqc6jd4RvrthNlDiE9U1tWmX7WRESftEDRosgxNsQG/Ze9YMRzHq" crossorigin="anonymous"></script>
+
+  <!-- Alpine -->
+  <script defer src="https://cdn.jsdelivr.net/npm/@alpinejs/persist@3.x.x/dist/cdn.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/@alpinejs/intersect@3.x.x/dist/cdn.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+
+  <!-- Shoelace -->
+  <link rel="stylesheet" href="/shoelace.css">
+  <script type="module" src="/shoelace.js"></script>
+
+  <!-- Runs synchronously to avoid flash of wrong theme -->
+  <script>
+    (function () {
+      const mode = localStorage.getItem('theme') || 'system';
+      const dark = mode === 'dark' || (mode === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+      document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+      if (dark) document.documentElement.classList.add('sl-theme-dark');
+    })();
+  </script>
+
+  <style>
+    /* Hide custom elements until their JS registers them, preventing
+       a flash of unstyled components on each page load. */
+    :not(:defined) { visibility: hidden; }
+
+    /* ── Layout and sizes ───────────────────────────────────────── */
+    :root {
+      --header-height: 56px;
+    }
+
+    /* ── Color tokens ───────────────────────────────────────────── */
+    :root,
+    [data-theme="light"] {
+      --color-bg:           #f8f9fa;
+      --color-surface:      #ffffff;
+      --color-border:       #dee2e6;
+      --color-text:         #212529;
+      --color-text-muted:   #6c757d;
+      --color-text-dimmed:  #a2acb6;
+      --color-accent:       #2563eb;
+      --color-accent-hover: #1d4ed8;
+      --color-bg-selected:  #8397aa;
+      --color-bg-muted:     #f1f3f5;
+    }
+
+    [data-theme="dark"] {
+      --color-bg:           #111317;
+      --color-surface:      #1e2025;
+      --color-border:       #2e3138;
+      --color-text:         #e1e3e8;
+      --color-text-muted:   #868e96;
+      --color-text-dimmed:  #5f646a;
+      --color-accent:       #60a5fa;
+      --color-accent-hover: #93c5fd;
+      --color-bg-selected:  #424a53;
+      --color-bg-muted:     #282c34;
+    }
+
+    /* ── Font-size tokens ───────────────────────────────────────── */
+    :root {
+      --fs-h1:   2rem;
+      --fs-h2:   1.5rem;
+      --fs-h3:   1.25rem;
+      --fs-body: 1rem;
+    }
+
+    /* ── Apply tokens ───────────────────────────────────────────── */
+    body { background-color: var(--color-bg); color: var(--color-text); font-size: var(--fs-body); font-family: var(--sl-font-sans); }
+    h1   { font-size: var(--fs-h1); }
+    h2   { font-size: var(--fs-h2); }
+    h3   { font-size: var(--fs-h3); }
+
+    /* ── Inputs ─────────────────────────────────────────────────── */
+    input[type="text"],
+    input[type="password"],
+    input[type="email"],
+    input[type="number"],
+    input[type="search"],
+    textarea,
+    select {
+      width: 100%;
+      padding: 0.4rem 0.65rem;
+      border: 1px solid var(--color-border);
+      border-radius: 0.375rem;
+      background: var(--color-surface);
+      color: var(--color-text);
+      font-size: var(--fs-body);
+      font-family: var(--sl-font-sans);
+      box-sizing: border-box;
+      transition: border-color 0.15s, outline-color 0.15s;
+    }
+    input:focus, textarea:focus, select:focus {
+      outline: 2px solid var(--color-accent);
+      outline-offset: 1px;
+      border-color: var(--color-accent);
+    }
+
+    /* ── Secret inputs (API keys etc.) ─────────────────────────── */
+    /* type="text" avoids browser password-manager popups;
+       -webkit-text-security masks the value visually in Safari/Chrome. */
+    .secret-input {
+      -webkit-text-security: disc;
+    }
+
+    /* ── Form grid (two-column: label | input) ──────────────────── */
+    .form-grid {
+      display: grid;
+      grid-template-columns: max-content 1fr;
+      gap: 0.75rem 1.5rem;
+      align-items: start;
+      max-width: 36rem;
+    }
+    .form-grid label {
+      padding-top: 0.45rem;        /* visually align with input text */
+      color: var(--color-text-muted);
+      font-size: 0.875rem;
+    }
+    .form-grid label small {
+      display: block;
+      margin-top: 0.15rem;
+      font-size: 0.75rem;
+    }
+    .form-grid .form-actions {
+      grid-column: 2;
+    }
+
+    /* ── Viewport ────────────────────────────────────────────────── */
+
+    html,
+    body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+    }
+
+    body {
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    main {
+      flex: 1;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    /* ── Navbar ─────────────────────────────────────────────────── */
+    header {
+      background: var(--color-surface);
+      border-bottom: 1px solid var(--color-border);
+      height: var(--header-height);
+    }
+    nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.5rem 1rem;
+    }
+    .nav-brand {
+      font-weight: 600;
+      font-size: var(--fs-body);
+      text-decoration: none;
+      color: var(--color-text);
+    }
+    .nav-end {
+      display: flex;
+      align-items: center;
+      gap: 0.25rem;
+    }
+  </style>
+
+  {% block head %}{% endblock %}
+</head>
+<body>
+  <header>
+    <nav>
+      <div class="nav-brand">
+        <sl-button href="/projects" variant="text">Home</sl-button>
+      </div >
+
+      <div class="nav-start">
+        {% block navigation_items %}
+        {% endblock %}
+      </div>
+
+      <div class="nav-end">
+        <sl-button href="/settings" variant="text">Settings</sl-button>
+        <sl-dropdown id="theme-picker">
+          <sl-icon-button slot="trigger" id="theme-icon" name="circle-half" label="Theme"></sl-icon-button>
+          <sl-menu>
+            <sl-menu-item value="light"><sl-icon slot="prefix" name="sun"></sl-icon>Light</sl-menu-item>
+            <sl-menu-item value="system"><sl-icon slot="prefix" name="circle-half"></sl-icon>System</sl-menu-item>
+            <sl-menu-item value="dark"><sl-icon slot="prefix" name="moon"></sl-icon>Dark</sl-menu-item>
+          </sl-menu>
+        </sl-dropdown>
+      </div>
+    </nav>
+  </header>
+
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+
+  {% block scripts %}{% endblock %}
+
+  <script type="module">
+    const ICONS = { light: 'sun', system: 'circle-half', dark: 'moon' };
+
+    function applyTheme(mode) {
+      const dark = mode === 'dark' || (mode === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+      document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+      document.documentElement.classList.toggle('sl-theme-dark', dark);
+      const icon = document.getElementById('theme-icon');
+      if (icon) icon.setAttribute('name', ICONS[mode]);
+    }
+
+    applyTheme(localStorage.getItem('theme') || 'system');
+
+    document.getElementById('theme-picker')?.addEventListener('sl-select', (e) => {
+      const mode = e.detail.item.value;
+      localStorage.setItem('theme', mode);
+      applyTheme(mode);
+    });
+
+    window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+      if ((localStorage.getItem('theme') || 'system') === 'system') applyTheme('system');
+    });
+  </script>
+</body>
+</html>
