@@ -38,12 +38,29 @@
           @sl-change="ocrLanguage = ($event.target as HTMLInputElement).value"
           style="margin-bottom: 0.5rem;"
       ></sl-input>
+
+      <div v-if="jobStatus && jobStatus.status === 'Running'" class="job-progress">
+        <div class="info-row">
+          <span class="info-label">Progress</span>
+          <span class="info-value">{{ jobStatus.processed_pages }} / {{ jobStatus.total_pages }}</span>
+        </div>
+        <sl-button
+            size="small"
+            variant="danger"
+            @click="cancelJob"
+            style="margin-top: 0.5rem; width: 100%;"
+        >
+          Cancel job
+        </sl-button>
+      </div>
       <sl-button
+          v-else
           size="small"
           variant="primary"
           :loading="isScanning"
           :disabled="isScanning || !selectionInfo"
           @click="scanPages(filteredPages)"
+          style="width: 100%;"
       >
         Scan selected
       </sl-button>
@@ -110,10 +127,23 @@ interface ScanConflict {
   pages: string[]
 }
 
+type JobState = 'Running' | 'Completed' | 'Failed' | 'Cancelled';
+
+interface ScanJobStatus {
+  total_pages: number;
+  processed_pages: number;
+  status: JobState;
+  results: ScanPageResult[];
+  error?: string;
+}
+
 const isScanning = ref(false);
 const ocrLanguage = ref('eng');
 const scanResults = ref<ScanPageResult[]>([]);
 const scanError = ref('');
+const jobStatus = ref<ScanJobStatus | null>(null);
+let pollInterval: number | null = null;
+
 const project = ref<Project | null>(null);
 const flows = computed(() => project.value?.flows || []);
 const layouts = computed(() => project.value?.layouts || []);
@@ -135,6 +165,58 @@ async function fetchProjectMetadata(): Promise<void> {
 
 
 // ── Scan ─────────────────────────────────────────────────────────────
+async function pollJobStatus() {
+  try {
+    const resp = await fetch(`/api/projects/${props.machineName}/pages/scan`);
+    if (resp.ok) {
+      const data = await resp.json() as ScanJobStatus;
+      jobStatus.value = data;
+      scanResults.value = data.results;
+
+      if (data.status !== 'Running') {
+        stopPolling();
+        isScanning.value = false;
+        void workspaceRef.value?.fetchHocrStatus();
+        if (data.status === 'Failed' && data.error) {
+          scanError.value = data.error;
+        }
+      }
+    } else if (resp.status === 404) {
+      stopPolling();
+    }
+  } catch (e) {
+    console.error('Polling failed:', e);
+  }
+}
+
+function startPolling() {
+  if (pollInterval) return;
+  pollInterval = window.setInterval(pollJobStatus, 2000);
+  void pollJobStatus();
+}
+
+function stopPolling() {
+  if (pollInterval) {
+    clearInterval(pollInterval);
+    pollInterval = null;
+  }
+}
+
+async function cancelJob() {
+  try {
+    const resp = await fetch(`/api/projects/${props.machineName}/pages/scan`, {
+      method: 'DELETE'
+    });
+    if (resp.ok) {
+      const data = await resp.json() as ScanJobStatus;
+      jobStatus.value = data;
+      stopPolling();
+    }
+  } catch (e) {
+    console.error('Cancel failed:', e);
+  }
+}
+
 async function scanPages(pagesToScan: Page[], force = false): Promise<void> {
   const indices = pagesToScan.map(p => p.index);
   if (!indices.length) return;
@@ -143,7 +225,10 @@ async function scanPages(pagesToScan: Page[], force = false): Promise<void> {
 
   isScanning.value = true;
   scanError.value = '';
-  if (!force) scanResults.value = [];
+  if (!force) {
+    scanResults.value = [];
+    jobStatus.value = null;
+  }
 
   try {
     const resp = await fetch(`/api/projects/${props.machineName}/pages/scan`, {
@@ -172,16 +257,16 @@ async function scanPages(pagesToScan: Page[], force = false): Promise<void> {
       const finalMsg = errorMsg || `Scan failed: ${resp.statusText}`;
       scanError.value = finalMsg;
       showError?.(finalMsg);
+      isScanning.value = false;
       return;
     }
 
-    const data = await resp.json() as { results: ScanPageResult[] };
-    scanResults.value = data.results;
-    void workspaceRef.value?.fetchHocrStatus();
+    const data = await resp.json() as ScanJobStatus;
+    jobStatus.value = data;
+    startPolling();
   } catch (e) {
     console.error(e);
     scanError.value = 'Network error.';
-  } finally {
     isScanning.value = false;
   }
 }
@@ -189,14 +274,28 @@ async function scanPages(pagesToScan: Page[], force = false): Promise<void> {
 onMounted(async () => {
   setActivePanels(panels);
   void fetchProjectMetadata();
+  // Check if a job is already running
+  await pollJobStatus();
+  if (jobStatus.value?.status === 'Running') {
+    startPolling();
+  }
 });
 
 onUnmounted(() => {
   setActivePanels(null);
+  stopPolling();
 });
 </script>
 
 <style>
+
+.job-progress {
+  margin-bottom: 0.75rem;
+  padding: 0.5rem;
+  border: 1px solid var(--sl-color-neutral-200);
+  border-radius: var(--sl-border-radius-medium);
+  background: var(--sl-color-neutral-50);
+}
 
 /* Scan results */
 .scan-error {
