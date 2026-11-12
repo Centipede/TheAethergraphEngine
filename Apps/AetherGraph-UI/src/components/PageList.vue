@@ -8,12 +8,6 @@
       <sl-button size="small" title="Forward (.)" @click="$emit('navigate', 1)">
         →
       </sl-button>
-      <sl-button size="small" title="Select all" @click="$emit('selectAll')">
-        +
-      </sl-button>
-      <sl-button size="small" title="Select None" @click="$emit('selectNone')">
-        -
-      </sl-button>
     </sl-button-group>
 
     <ul
@@ -89,8 +83,6 @@ const props = defineProps<{
 
 defineEmits<{
   navigate: [delta: number];
-  selectAll: [];
-  selectNone: [];
   'page-click': [pageIndex: number, event: MouseEvent];
 }>();
 
