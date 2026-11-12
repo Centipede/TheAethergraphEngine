@@ -164,8 +164,10 @@
 <script setup lang="ts">
 import {computed, inject, ref, type Ref} from 'vue';
 import { useHocrContext } from '../composables/useHocr';
+import { cropEdgesToRect } from '../utils/geometry';
 import {
-  type PixelRegion,
+  type CropEdges,
+  type PixelRect,
   findItem,
   getChildren,
   getParentLevel,
@@ -216,7 +218,7 @@ const props = withDefaults(defineProps<{
   showCropOverlay?: boolean;
   presentationOnly?: boolean;
 
-  crop?: PixelRegion;
+  crop?: CropEdges;
 
   palette?: EditorPalette;
   pointerSettings?: PointerSettings;
@@ -325,7 +327,7 @@ const src = computed(() => {
 const imageFrameRef = ref<HTMLElement | null>(null);
 const imageWrapRef = ref<HTMLElement | null>(null);
 
-const hocrBbox = computed((): PixelRegion | null => {
+const hocrBbox = computed((): PixelRect | null => {
   const page = hocrPage?.value;
   if (!page || page.careas.length === 0) return null;
 
@@ -344,7 +346,7 @@ const hocrBbox = computed((): PixelRegion | null => {
   return found ? { left, top, right, bottom } : null;
 });
 
-function expandRegion(region: PixelRegion, margin: number): PixelRegion {
+function expandRegion(region: PixelRect, margin: number): PixelRect {
   const left = Math.max(0, region.left - margin);
   const top = Math.max(0, region.top - margin);
   const right = Math.min(props.page.scan_width, region.right + margin);
@@ -358,10 +360,16 @@ function expandRegion(region: PixelRegion, margin: number): PixelRegion {
   };
 }
 
-const viewArea = computed((): PixelRegion => {
+// `crop` holds insets (pixels in from each edge); overlay geometry needs
+// absolute scan coordinates.
+const cropRect = computed((): PixelRect | null => props.crop
+    ? cropEdgesToRect(props.crop, props.page.scan_width, props.page.scan_height)
+    : null);
+
+const viewArea = computed((): PixelRect => {
   const req = props.zoomRequest;
-  if (req.mode === 'CropRegion' && props.crop) {
-    return expandRegion(props.crop, req.margin);
+  if (req.mode === 'CropRegion' && cropRect.value) {
+    return expandRegion(cropRect.value, req.margin);
   }
   if (req.mode === 'PageBBox' && hocrBbox.value) {
     return expandRegion(hocrBbox.value, req.margin);
@@ -561,10 +569,10 @@ const overlayItems = computed((): OverlayItem[] => {
   return items;
 });
 
-const cropLeft = computed(() => props.crop ? mapLeftToPct(props.crop.left) : '0%');
-const cropTop = computed(() => props.crop ? mapTopToPct(props.crop.top) : '0%');
-const cropRight = computed(() => props.crop ? mapRightToPct(props.crop.right) : '0%');
-const cropBottom = computed(() => props.crop ? mapBottomToPct(props.crop.bottom) : '0%');
+const cropLeft = computed(() => cropRect.value ? mapLeftToPct(cropRect.value.left) : '0%');
+const cropTop = computed(() => cropRect.value ? mapTopToPct(cropRect.value.top) : '0%');
+const cropRight = computed(() => cropRect.value ? mapRightToPct(cropRect.value.right) : '0%');
+const cropBottom = computed(() => cropRect.value ? mapBottomToPct(cropRect.value.bottom) : '0%');
 
 const cropAreaStyle = computed(() => ({
   position: 'absolute' as const,

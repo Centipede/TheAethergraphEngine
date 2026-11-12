@@ -238,7 +238,7 @@ import {usePageFilterNavigation} from "../composables/usePageFilterNavigation";
 import { useHocrContext } from '../composables/useHocr';
 import { isTypingTarget } from '../utils/dom';
 import type {
-  PixelRegion, FlowSchema, HocrLevel,
+  CropEdges, FlowSchema, HocrLevel,
   LayoutSchema, Page, PageDb, PageInteractionUpdate, PanelId, PointerSettings, StructureDb, EditorPalette,
   Project, DimLayers
 } from '../types';
@@ -280,7 +280,7 @@ const props = withDefaults(defineProps<{
       canPagesBeFiltered?: boolean;
       formatPageExtras?: (pages: Page[]) => Map<number, string>;
       pageListColumns?: PageListColumn[];
-      pageCrops?: Map<number, PixelRegion>;
+      pageCrops?: Map<number, CropEdges>;
       isPageChanged?: (page: Page) => boolean;
       stripEdge?: string;
       stripFraction?: number;

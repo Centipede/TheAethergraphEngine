@@ -43,11 +43,12 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
-import type {Page, PixelRegion, FlowSchema, LayoutSchema, Hint, EditorPalette, HintType} from '../types';
+import type {Page, CropEdges, FlowSchema, LayoutSchema, Hint, EditorPalette, HintType} from '../types';
 import { DEFAULT_PALETTE } from '../types';
 import type { HocrPage, HocrCarea, HocrBlock } from '../types/hocr';
 import { fetchHocrPage } from '../composables/useHocr';
 import { applyColorSpecs } from '../utils/colors';
+import { cropEdgesToRect } from '../utils/geometry';
 
 const props = withDefaults(defineProps<{
   page:          Page;
@@ -55,7 +56,7 @@ const props = withDefaults(defineProps<{
   selected?:     boolean;
   isCurrent?:    boolean;
   fraction:      number;
-  crop:          PixelRegion;
+  crop:          CropEdges;
   palette?:      EditorPalette;
   machineName?:  string;
   thumbBaseUrl:  string;
@@ -111,13 +112,21 @@ const imgStyle = computed(() => ({
 const sx = computed(() => props.page.scan_width  > 0 ? props.page.thumb_width  / props.page.scan_width  : 1);
 const sy = computed(() => props.page.scan_height > 0 ? props.page.thumb_height / props.page.scan_height : 1);
 
-const tl = computed(() => Math.round(props.crop.left   * sx.value));
-const tt = computed(() => Math.round(props.crop.top    * sy.value));
-const tr = computed(() => Math.round(props.crop.right  * sx.value));
-const tb = computed(() => Math.round(props.crop.bottom * sy.value));
+const cropRect = computed(() =>
+    cropEdgesToRect(props.crop, props.page.scan_width, props.page.scan_height));
 
-const iw = computed(() => props.page.thumb_width  - tl.value - tr.value);
-const ih = computed(() => props.page.thumb_height - tt.value - tb.value);
+// Keep box in thumbnail pixels.
+const tl = computed(() => Math.round(cropRect.value.left   * sx.value));
+const tt = computed(() => Math.round(cropRect.value.top    * sy.value));
+const kr = computed(() => Math.round(cropRect.value.right  * sx.value));
+const kb = computed(() => Math.round(cropRect.value.bottom * sy.value));
+
+// Discard band thicknesses in thumbnail pixels.
+const tr = computed(() => props.page.thumb_width  - kr.value);
+const tb = computed(() => props.page.thumb_height - kb.value);
+
+const iw = computed(() => kr.value - tl.value);
+const ih = computed(() => kb.value - tt.value);
 
 const ox = computed(() => imgOffset.value.x);
 const oy = computed(() => imgOffset.value.y);
