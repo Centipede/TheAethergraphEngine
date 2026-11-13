@@ -199,7 +199,7 @@
 <script setup lang="ts">
 import { reactive, ref, onMounted, onUnmounted, inject } from 'vue';
 import PageWorkspace from '../components/PageWorkspace.vue';
-import type {PixelRegion, Page, PageDb} from '../types';
+import type {CropEdges, Page, PageDb} from '../types';
 import { usePanelVisibilityContext } from '../composables/usePanelVisibility';
 import { usePersistentPanels } from '../composables/usePersistentPanels';
 import { provideHocrContext } from '../composables/useHocr';
@@ -254,8 +254,8 @@ const assignValues = reactive<AssignValues>({
   bottom: undefined,
 });
 
-const pageCrops = reactive(new Map<number, PixelRegion>());
-const originalCrops = reactive(new Map<number, PixelRegion>());
+const pageCrops = reactive(new Map<number, CropEdges>());
+const originalCrops = reactive(new Map<number, CropEdges>());
 
 function syncCropStateFromPageDb(data: PageDb) {
   pageCrops.clear();
@@ -291,7 +291,7 @@ function parseOptionalNumber(value: string): OptionalNumber {
 
 // ── Accumulator & magnet ────────────────────────────────────────────────
 const accumulator = ref(0);
-const roundBaseCrops = new Map<number, PixelRegion>();
+const roundBaseCrops = new Map<number, CropEdges>();
 
 type MagnetProfile = 'bell' | 'rampup' | 'rampdown';
 
@@ -318,7 +318,7 @@ function applyMagnet(
 ) {
   if (edge.value === 'none') return;
 
-  const edgeKey = edge.value as keyof PixelRegion;
+  const edgeKey = edge.value as keyof CropEdges;
   const n = filteredPages.length;
 
   for (let i = 0; i < n; i++) {
@@ -473,8 +473,8 @@ function adjustByKey(
 
 function forEachSelected(
     filteredPages: Page[],
-    pageCrops: Map<number, PixelRegion>,
-    fn: (crop: PixelRegion) => void,
+    pageCrops: Map<number, CropEdges>,
+    fn: (crop: CropEdges) => void,
 ) {
   for (const page of filteredPages) {
     const crop = pageCrops.get(page.index);

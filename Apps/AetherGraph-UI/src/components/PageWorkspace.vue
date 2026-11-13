@@ -15,6 +15,20 @@
         <div style="flex: 0"></div>
 
         <sl-icon-button
+            name="check-all"
+            label="Select all"
+            :disabled="!pages.length"
+            @click="selectAll"
+        ></sl-icon-button>
+
+        <sl-icon-button
+            name="x-lg"
+            label="Select none"
+            :disabled="!pages.length"
+            @click="selectNone"
+        ></sl-icon-button>
+
+        <sl-icon-button
             name="book-half"
             label="Show even pages"
             @click="onFilterChange(filterMode === 'even' ? 'all' : 'even')"
@@ -46,10 +60,9 @@
             :page-extras="pageExtras"
             @navigate="navigatePage"
             @page-click="handleListClick"
-            @select-all="selectAll"
-            @select-none="selectNone"
         />
       </div>
+
       <div class="sidebar-lead">
         <div class="sidebar-lead-label" @click="togglePanel('section-structure')">Sections</div>
       </div>
@@ -225,7 +238,7 @@ import {usePageFilterNavigation} from "../composables/usePageFilterNavigation";
 import { useHocrContext } from '../composables/useHocr';
 import { isTypingTarget } from '../utils/dom';
 import type {
-  PixelRegion, FlowSchema, HocrLevel,
+  CropEdges, FlowSchema, HocrLevel,
   LayoutSchema, Page, PageDb, PageInteractionUpdate, PanelId, PointerSettings, StructureDb, EditorPalette,
   Project, DimLayers
 } from '../types';
@@ -267,7 +280,7 @@ const props = withDefaults(defineProps<{
       canPagesBeFiltered?: boolean;
       formatPageExtras?: (pages: Page[]) => Map<number, string>;
       pageListColumns?: PageListColumn[];
-      pageCrops?: Map<number, PixelRegion>;
+      pageCrops?: Map<number, CropEdges>;
       isPageChanged?: (page: Page) => boolean;
       stripEdge?: string;
       stripFraction?: number;

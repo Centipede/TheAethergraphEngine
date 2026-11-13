@@ -170,6 +170,22 @@ pub struct CropEdges {
     pub bottom: u32,
 }
 
+/// Absolute scan-pixel coordinates of a rectangle's edges.
+///
+/// Unlike [`CropEdges`], whose fields are insets measured inwards from each
+/// edge of the scan, these are plain coordinates in scan space.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
+pub struct PixelRect {
+    /// Scan-space x of the left edge.
+    pub left: u32,
+    /// Scan-space y of the top edge.
+    pub top: u32,
+    /// Scan-space x of the right edge.
+    pub right: u32,
+    /// Scan-space y of the bottom edge.
+    pub bottom: u32,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "lowercase", tag = "type")]
 pub enum HintType {
@@ -186,7 +202,8 @@ pub enum HintType {
 pub struct Hint {
     #[serde(flatten)]
     pub hint_type: HintType,
-    pub area: CropEdges,
+    /// Absolute scan coordinates of the hinted region (not crop-style insets).
+    pub area: PixelRect,
 }
 
 #[derive(Serialize, Deserialize, Clone, Default)]
