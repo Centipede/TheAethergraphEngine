@@ -468,6 +468,25 @@ impl HocrBlockKind {
             _ => None,
         }
     }
+    /// True for the seven heading kinds, i.e. exactly those that have a
+    /// `SectionKind` counterpart and can therefore anchor a headline in the
+    /// structure database. `Paragraph`, `Image`, `Table` and `List` are not
+    /// headlines.
+    pub fn is_headline(self) -> bool {
+        match self {
+            HocrBlockKind::Part
+            | HocrBlockKind::Chapter
+            | HocrBlockKind::Section
+            | HocrBlockKind::Subsection
+            | HocrBlockKind::Subsubsection
+            | HocrBlockKind::Subsubsubsection
+            | HocrBlockKind::Subsubsubsubsection => true,
+            HocrBlockKind::Paragraph
+            | HocrBlockKind::Image
+            | HocrBlockKind::Table
+            | HocrBlockKind::List => false,
+        }
+    }
     pub fn from_json_name(class_name: &str) -> Option<Self> {
         match class_name {
             "image" => Some(HocrBlockKind::Image),

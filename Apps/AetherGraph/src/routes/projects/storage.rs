@@ -37,7 +37,28 @@ pub fn create_project_on_disk(state: &AppState, name: &str, machine_name: &str) 
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
     fs::write(project_dir.join("metadata").join("project.toml"), toml_str)?;
 
-    save_structure_db(&state.project_structuredb_path(machine_name), &StructureDb::default())
+    save_structure_db_atomic(&state.project_structuredb_path(machine_name), &StructureDb::default())
+}
+
+/// Path of a project's page database.
+///
+/// Mirrored by [`crate::state::AppState::project_pagesdb_path`]; this free
+/// function exists for the code paths that hold only a `projects_dir`.
+pub fn pagedb_path(projects_dir: &PathBuf, machine_name: &str) -> PathBuf {
+    projects_dir
+        .join(machine_name)
+        .join("pages")
+        .join("pagedata.json")
+}
+
+/// Path of a project's structure database.
+///
+/// Mirrored by [`crate::state::AppState::project_structuredb_path`].
+pub fn structuredb_path(projects_dir: &PathBuf, machine_name: &str) -> PathBuf {
+    projects_dir
+        .join(machine_name)
+        .join("sections")
+        .join("sectiondata.json")
 }
 
 pub fn load_page_db(path: &std::path::Path) -> PageDb {
@@ -53,20 +74,48 @@ pub fn save_page_db(path: &std::path::Path, db: &PageDb) -> std::io::Result<()> 
     fs::write(path, json)
 }
 
-pub fn load_structure_db(path: &std::path::Path) -> StructureDb {
-    fs::read_to_string(path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default()
+/// Read a project's structure database.
+///
+/// A missing file yields an empty database, which is the legitimate state of a
+/// project whose structure has never been touched. Anything else -- an I/O
+/// error, or JSON that will not parse -- is an error.
+///
+/// This is deliberately fallible. An earlier `load_structure_db` mapped a
+/// parse failure to `StructureDb::default()`; now that the sync path writes
+/// this file after every hOCR edit, reconciling-then-saving on a momentarily
+/// unreadable file would have silently replaced the user's whole section tree
+/// with an empty one.
+pub fn try_load_structure_db(path: &std::path::Path) -> Result<StructureDb, String> {
+    let raw = match fs::read_to_string(path) {
+        Ok(raw) => raw,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(StructureDb::default()),
+        Err(e) => return Err(format!("could not read {}: {e}", path.display())),
+    };
+    serde_json::from_str(&raw).map_err(|e| format!("could not parse {}: {e}", path.display()))
 }
 
-pub fn save_structure_db(path: &std::path::Path, db: &StructureDb) -> std::io::Result<()> {
+/// Write the structure database so a crash cannot leave a half-written file.
+///
+/// Serialises to a sibling temporary file and renames it into place; `rename`
+/// within a directory is atomic, so a reader sees either the old file or the new
+/// one. Writing in place would be unsafe on this path, which runs after every
+/// single hOCR edit.
+pub fn save_structure_db_atomic(path: &std::path::Path, db: &StructureDb) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
     let json = serde_json::to_string_pretty(db)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-    fs::write(path, json)
+
+    let tmp = path.with_extension("json.tmp");
+    fs::write(&tmp, json)?;
+    match fs::rename(&tmp, path) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            let _ = fs::remove_file(&tmp);
+            Err(e)
+        }
+    }
 }
 
 #[allow(dead_code)]

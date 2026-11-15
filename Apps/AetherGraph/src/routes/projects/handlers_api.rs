@@ -5,7 +5,7 @@ use crate::routes::projects::forms::{
     ScanJobStatus, JobState,
 };
 use crate::routes::projects::models::{IMPORT_ORDER_GAP, Page, PageDb, StructureDb, HintType};
-use crate::routes::projects::{images, storage};
+use crate::routes::projects::{images, storage, structure_sync};
 use crate::state::AppState;
 use crate::hocr_parser::ParserConfig;
 use crate::hocr_parser::navigation::{preceding_block, succeeding_block};
@@ -300,10 +300,12 @@ pub async fn post_remove_images(
         .join("pages")
         .join("pagedata.json");
     let mut db = storage::load_page_db(&db_path);
+    let previous = db.clone();
     let to_remove: std::collections::HashSet<usize> = payload.indices.into_iter().collect();
     db.pages.retain(|p| !to_remove.contains(&p.index));
     storage::reindex(&mut db);
     let _ = storage::save_page_db(&db_path, &db);
+    structure_sync::sync_page_db_change(&state.projects_dir, &machine_name, &previous, &db);
     get_project_pagesdb(State(state), Path(machine_name))
         .await
         .into_response()
@@ -515,6 +517,13 @@ async fn run_scan_job(
                                 &page.scan,
                             );
                             let _ = tokio::fs::remove_file(edited_path).await;
+                            // The page now holds brand-new Tesseract output, so
+                            // every previous block id and kind is gone.
+                            structure_sync::sync_stems(
+                                &projects_dir,
+                                &machine_name,
+                                std::slice::from_ref(&page.scan),
+                            );
                             job_status.results.push(ScanPageResult {
                                 scan: page.scan.clone(),
                                 success: true,
@@ -746,8 +755,20 @@ pub async fn put_project_pagesdb(
     if !pagedb_path.exists() {
         return StatusCode::NOT_FOUND.into_response();
     }
+    // Read the previous state before overwriting it: the structure database is
+    // keyed by page name, so renames have to be translated, and the only way to
+    // tell which page became which is to pair them up on Page.scan.
+    let previous = storage::load_page_db(&pagedb_path);
     match storage::save_page_db(&pagedb_path, &pagedb) {
-        Ok(_) => StatusCode::OK.into_response(),
+        Ok(_) => {
+            structure_sync::sync_page_db_change(
+                &state.projects_dir,
+                &machine_name,
+                &previous,
+                &pagedb,
+            );
+            StatusCode::OK.into_response()
+        }
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }
@@ -761,6 +782,7 @@ pub async fn save_all_pages(
 
     let mut success_count = 0;
     let mut failure_count = 0;
+    let mut synced_stems: Vec<String> = Vec::new();
 
     for page in &pagedb.pages {
         if let Some(active_path) = storage::hocr_active_path(&state.projects_dir, &machine_name, &page.scan) {
@@ -769,7 +791,10 @@ pub async fn save_all_pages(
                     if let Some(hocr_page) = crate::hocr_parser::parse(&html, ParserConfig::default()) {
                         let normalized_html = hocr_page.to_hocr_html();
                         match storage::save_hocr_edited(&state.projects_dir, &machine_name, &page.scan, &normalized_html) {
-                            Ok(_) => success_count += 1,
+                            Ok(_) => {
+                                success_count += 1;
+                                synced_stems.push(page.scan.clone());
+                            }
                             Err(_) => failure_count += 1,
                         }
                     } else {
@@ -780,6 +805,11 @@ pub async fn save_all_pages(
             }
         }
     }
+
+    // The round-trip can drop blocks the parser cannot represent, so the
+    // structure database has to be brought back in line with what is now on
+    // disk.
+    structure_sync::sync_stems(&state.projects_dir, &machine_name, &synced_stems);
 
     Json(serde_json::json!({
         "success": true,
@@ -793,8 +823,13 @@ pub async fn get_project_structure(
     Path(machine_name): Path<String>,
 ) -> impl IntoResponse {
     let path = state.project_structuredb_path(&machine_name);
-    let db = storage::load_structure_db(&path);
-    Json(db).into_response()
+    // Deliberately fallible: silently treating unparseable JSON as an empty
+    // database would show the user an empty outline for a file that is merely
+    // unreadable -- and invite them to overwrite it.
+    match storage::try_load_structure_db(&path) {
+        Ok(db) => Json(db).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
+    }
 }
 
 pub async fn put_project_structure(
@@ -803,7 +838,7 @@ pub async fn put_project_structure(
     Json(db): Json<StructureDb>,
 ) -> impl IntoResponse {
     let path = state.project_structuredb_path(&machine_name);
-    match storage::save_structure_db(&path, &db) {
+    match storage::save_structure_db_atomic(&path, &db) {
         Ok(_) => StatusCode::OK.into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
@@ -849,6 +884,7 @@ pub async fn auto_flow(
         (payload.stems.clone(), None)
     };
 
+    let mut synced_stems: Vec<String> = Vec::new();
     for target_stem in target_stems {
         let hocr_path = match storage::hocr_active_path(&state.projects_dir, &machine_name, &target_stem) {
             Some(path) => path,
@@ -889,7 +925,12 @@ pub async fn auto_flow(
                 println!("auto_flow: task panicked for stem {}: {}", target_stem, e);
             }
         }
+        synced_stems.push(target_stem);
     }
+
+    // Carea flow/layout only, so normally a no-op -- but it rewrites hOCR for
+    // many pages at once, and reconciling keeps every write path uniform.
+    structure_sync::sync_stems(&state.projects_dir, &machine_name, &synced_stems);
 
     StatusCode::OK.into_response()
 }
@@ -912,6 +953,9 @@ pub async fn auto_bridge_page(
 
         let new_html = page.to_hocr_html();
         storage::save_hocr_edited(&projects_dir, &machine_name, &stem, &new_html).ok()?;
+        // Hints and metrics only, so this reconcile is expected to be a no-op;
+        // it is here so that no hOCR write path is left unsynced.
+        structure_sync::sync_page(&projects_dir, &machine_name, &stem, &page);
         Some(())
     })
     .await;
@@ -954,6 +998,7 @@ pub async fn auto_bridge_block(
 
             let new_html = page.to_hocr_html();
             storage::save_hocr_edited(&projects_dir, &machine_name, &stem, &new_html).ok()?;
+            structure_sync::sync_page(&projects_dir, &machine_name, &stem, &page);
             Some(())
         } else {
             None

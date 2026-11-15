@@ -41,17 +41,11 @@ impl AppState {
     }
 
     pub fn project_pagesdb_path(&self, machine_name: &str) -> PathBuf {
-        self.projects_dir
-            .join(machine_name)
-            .join("pages")
-            .join("pagedata.json")
+        crate::routes::projects::storage::pagedb_path(&self.projects_dir, machine_name)
     }
 
     pub fn project_structuredb_path(&self, machine_name: &str) -> PathBuf {
-        self.projects_dir
-            .join(machine_name)
-            .join("sections")
-            .join("sectiondata.json")
+        crate::routes::projects::storage::structuredb_path(&self.projects_dir, machine_name)
     }
 }
 

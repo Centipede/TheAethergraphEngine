@@ -231,7 +231,7 @@ pub struct Page {
     pub hints: Vec<Hint>,
 }
 
-#[derive(Serialize, Deserialize, Default)]
+#[derive(Serialize, Deserialize, Default, Clone)]
 pub struct PageDb {
     pub pages: Vec<Page>,
     #[serde(default)]
@@ -240,7 +240,7 @@ pub struct PageDb {
 
 pub const IMPORT_ORDER_GAP: u32 = 1000;
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Headline {
     pub page: String,
     pub block_id: String,
@@ -276,6 +276,26 @@ pub enum SectionKind {
     Subsubsection,
     Subsubsubsection,
     Subsubsubsubsection,
+}
+
+/// Map an hOCR block kind onto its structure-database counterpart.
+///
+/// `None` for the kinds that cannot anchor a section (`Paragraph`, `Image`,
+/// `Table`, `List`); this mirrors [`crate::hocr_parser::HocrBlockKind::is_headline`].
+impl From<crate::hocr_parser::HocrBlockKind> for Option<SectionKind> {
+    fn from(kind: crate::hocr_parser::HocrBlockKind) -> Self {
+        use crate::hocr_parser::HocrBlockKind as K;
+        match kind {
+            K::Part => Some(SectionKind::Part),
+            K::Chapter => Some(SectionKind::Chapter),
+            K::Section => Some(SectionKind::Section),
+            K::Subsection => Some(SectionKind::Subsection),
+            K::Subsubsection => Some(SectionKind::Subsubsection),
+            K::Subsubsubsection => Some(SectionKind::Subsubsubsection),
+            K::Subsubsubsubsection => Some(SectionKind::Subsubsubsubsection),
+            K::Paragraph | K::Image | K::Table | K::List => None,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

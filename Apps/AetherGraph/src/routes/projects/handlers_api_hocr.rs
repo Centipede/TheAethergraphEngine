@@ -3,6 +3,7 @@ use crate::hocr_parser::{HocrBlockKind, HocrPage, HocrPath, ParserConfig};
 use crate::routes::projects::forms::{AddRequest, MorphRequest, MergeItemsRequest, MergeRequest, SplitRequest, RescanRequest};
 use crate::routes::projects::handlers_api::get_hocr_json;
 use crate::routes::projects::storage;
+use crate::routes::projects::structure_sync;
 use crate::state::AppState;
 use axum::Json;
 use axum::extract::{Path, State, Query};
@@ -31,6 +32,11 @@ fn save_and_report(
     if let Err(_e) = storage::save_hocr_edited(&projects_dir, &machine_name, &stem, &html) {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
+    // Every block/carea/line/word mutation funnels through here, so one call
+    // keeps the structure database truthful for the whole editing surface --
+    // including the removals that cascade up from a deleted word. Uses the
+    // page we already hold rather than re-reading what we just wrote.
+    structure_sync::sync_page(projects_dir, machine_name, stem, page);
     return Json(HocrUpdateResponse { page, new_id }).into_response();
 }
 
@@ -1326,6 +1332,15 @@ pub async fn restore_from_original(
     if let Err(_e) = std::fs::copy(&original_path, &edited_path) {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
+
+    // Reverts every hand-marked heading on the page in one step, and writes the
+    // file directly rather than through save_and_report, so it needs its own
+    // reconcile.
+    structure_sync::sync_stems(
+        &state.projects_dir,
+        &machine_name,
+        std::slice::from_ref(&stem),
+    );
 
     get_hocr_json(State(state), Path((machine_name, stem)), Query(ParserConfig::default()))
         .await

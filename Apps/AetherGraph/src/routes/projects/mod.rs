@@ -5,6 +5,7 @@ pub mod images;
 pub mod handlers_web;
 pub mod handlers_api;
 pub mod handlers_api_hocr;
+pub mod structure_sync;
 
 #[allow(dead_code)]
 fn parse_date(s: &str) -> Option<time::Date> {
