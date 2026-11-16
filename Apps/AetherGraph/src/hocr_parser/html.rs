@@ -73,6 +73,15 @@ impl HocrCarea {
             html.push_str(&block.to_hocr_html());
         }
 
+        // Mirrors `HocrPage::to_hocr_html`: markup the parser does not model is
+        // preserved verbatim rather than dropped on save. Safe only because a
+        // carea's `unknowns` are its own children; while they were copies of the
+        // page-level set, emitting them here would have written one duplicate
+        // per carea.
+        for unknown in &self.unknowns {
+            html.push_str(&unknown.to_hocr_html());
+        }
+
         html.push_str("</div>\n");
         html
     }

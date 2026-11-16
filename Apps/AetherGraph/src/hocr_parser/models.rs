@@ -422,6 +422,24 @@ impl HocrPath {
 }
 
 impl HocrBlockKind {
+    /// Every variant, in enum order. The parser derives its block selector
+    /// from this list (see `parser.rs`), so a kind missing here is a kind the
+    /// parser silently drops on the next parse. Keep it in sync with the enum,
+    /// and with `tag_name`/`class_name`/`from_class_name` below.
+    pub const ALL: [HocrBlockKind; 11] = [
+        HocrBlockKind::Paragraph,
+        HocrBlockKind::Part,
+        HocrBlockKind::Chapter,
+        HocrBlockKind::Section,
+        HocrBlockKind::Subsection,
+        HocrBlockKind::Subsubsection,
+        HocrBlockKind::Subsubsubsection,
+        HocrBlockKind::Subsubsubsubsection,
+        HocrBlockKind::Image,
+        HocrBlockKind::Table,
+        HocrBlockKind::List,
+    ];
+
     pub fn tag_name(self) -> &'static str {
         match self {
             HocrBlockKind::Image => "img",
@@ -466,6 +484,25 @@ impl HocrBlockKind {
             "ocr_table" => Some(HocrBlockKind::Table),
             "ocr_list" => Some(HocrBlockKind::List),
             _ => None,
+        }
+    }
+    /// True for the seven heading kinds, i.e. exactly those that have a
+    /// `SectionKind` counterpart and can therefore anchor a headline in the
+    /// structure database. `Paragraph`, `Image`, `Table` and `List` are not
+    /// headlines.
+    pub fn is_headline(self) -> bool {
+        match self {
+            HocrBlockKind::Part
+            | HocrBlockKind::Chapter
+            | HocrBlockKind::Section
+            | HocrBlockKind::Subsection
+            | HocrBlockKind::Subsubsection
+            | HocrBlockKind::Subsubsubsection
+            | HocrBlockKind::Subsubsubsubsection => true,
+            HocrBlockKind::Paragraph
+            | HocrBlockKind::Image
+            | HocrBlockKind::Table
+            | HocrBlockKind::List => false,
         }
     }
     pub fn from_json_name(class_name: &str) -> Option<Self> {

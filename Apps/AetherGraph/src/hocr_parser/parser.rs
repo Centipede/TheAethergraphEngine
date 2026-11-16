@@ -23,7 +23,20 @@ pub fn parse(html: &str, _config: ParserConfig) -> Option<HocrPage> {
 
     let sel_page = Selector::parse("div.ocr_page").ok()?;
     let sel_carea = Selector::parse("div.ocr_carea").ok()?;
-    let sel_block = Selector::parse("img, p.ocr_par, h1.ocr_part, h1.ocr_chapter, h2.ocr_section, h3.ocr_subsection, h4.ocr_subsubsection, h5.ocr_subsubsubsection, h6.ocr_subsubsubsubsection").ok()?;
+    // Derived from `HocrBlockKind::ALL` rather than hand-written, so the read
+    // side cannot drift from the write side (`class_name`, used by `to_hocr_html`).
+    // The bare `img` term is kept on purpose: an `img` element is mapped to
+    // `Image` from its tag name alone further down, regardless of class, which
+    // is what lets us read OCR output that emits `<img>` without `ocr_photo`.
+    let block_selector = std::iter::once("img".to_string())
+        .chain(
+            HocrBlockKind::ALL
+                .iter()
+                .map(|kind| format!("{}.{}", kind.tag_name(), kind.class_name())),
+        )
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sel_block = Selector::parse(&block_selector).ok()?;
     let sel_line = Selector::parse("span.ocr_line, span.ocr_caption").ok()?;
     let sel_word = Selector::parse("span.ocrx_word").ok()?;
     let sel_dropcap = Selector::parse("span.dropcap").ok()?;
@@ -170,7 +183,10 @@ pub fn parse(html: &str, _config: ParserConfig) -> Option<HocrPage> {
                 })
                 .collect();
 
-            let unknowns = collect_unknowns(page_el, &sel_carea);
+            // A carea's unknowns are its own non-block children. This used to
+            // read `(page_el, &sel_carea)`, which handed every carea a copy of
+            // the page-level unknown set instead.
+            let unknowns = collect_unknowns(carea_el, &sel_block);
 
             Some(HocrCarea {
                 level: "carea".to_string(),
