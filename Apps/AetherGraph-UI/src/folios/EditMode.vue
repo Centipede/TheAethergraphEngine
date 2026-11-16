@@ -596,22 +596,9 @@ const LEVEL_SEGMENT: Record<string, string> = {
   carea: 'careas', block: 'blocks', line: 'lines', word: 'words',
 };
 
-// 0–6 → hOCR block kind strings. Keys match the task spec.
-const BLOCK_KIND_KEYS: Record<string, string> = {
-  '0': 'part',                // H1 + class='ocr_part'
-  '1': 'chapter',             // H1
-  '2': 'section',             // H2
-  '3': 'subsection',          // H3
-  '4': 'subsubsection',       // H4
-  '5': 'subsubsubsection',    // H5
-  '6': 'subsubsubsubsection', // H6
-  '7': 'paragraph',           // P
-  '8': 'image',               // IMG
-  '9': 'table',               // TBL
-  'l': 'list',                // LST
-};
-
 // ordered list for the button palette, including paragraph.
+// `disabled` is the single source of truth: it greys out the button AND keeps
+// the keyboard shortcut below from reaching the backend.
 const BLOCK_KINDS = [
   { key: '0', kind: 'part',                 label: 'Part', disabled: false },
   { key: '1', kind: 'chapter',              label: 'H1',   disabled: false },
@@ -625,6 +612,12 @@ const BLOCK_KINDS = [
   { key: '9', kind: 'table',                label: 'TBL',  disabled: true  },
   { key: 'L', kind: 'list',                 label: 'LST',  disabled: true  },
 ] as const;
+
+// key → hOCR block kind string, derived from the palette so the two cannot
+// disagree. Disabled kinds are left out, which is what stops the shortcut.
+const BLOCK_KIND_KEYS: Record<string, string> = Object.fromEntries(
+  BLOCK_KINDS.filter((bk) => !bk.disabled).map((bk) => [bk.key.toLowerCase(), bk.kind]),
+);
 
 const KIND_TO_PALETTE_KEY: Record<string, string> = {
   'part': 'partColor',

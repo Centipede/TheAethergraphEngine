@@ -1218,3 +1218,161 @@ fn test_modern_block_hints_roundtrip() {
     assert_eq!(hints2.break_from_preceding, Evidence::Assigned(false));
     assert_eq!(hints2.break_from_following, Evidence::Assigned(true));
 }
+
+const TABLE_AND_LIST_PAGE: &str = r#"<!DOCTYPE html>
+<html>
+<body>
+<div class="ocr_page" id="page_1" title="bbox 0 0 1000 1000">
+<div class="ocr_carea" id="carea_1" title="bbox 0 0 1000 1000">
+<p class="ocr_par" id="par_1" title="bbox 0 0 1000 100">
+<span class="ocr_line" id="line_1" title="bbox 0 0 1000 100; baseline 0 0; x_size 0; x_descenders 0; x_ascenders 0">
+<span class="ocrx_word" id="word_1" title="bbox 0 0 100 100; x_wconf 90">Prose</span>
+</span>
+</p>
+<div class="ocr_table" id="par_2" title="bbox 0 100 1000 200">
+<span class="ocr_line" id="line_2" title="bbox 0 100 1000 200; baseline 0 0; x_size 0; x_descenders 0; x_ascenders 0">
+<span class="ocrx_word" id="word_2" title="bbox 0 100 100 200; x_wconf 90">Cell</span>
+</span>
+</div>
+<div class="ocr_list" id="par_3" title="bbox 0 200 1000 300">
+<span class="ocr_line" id="line_3" title="bbox 0 200 1000 300; baseline 0 0; x_size 0; x_descenders 0; x_ascenders 0">
+<span class="ocrx_word" id="word_3" title="bbox 0 200 100 300; x_wconf 90">Item</span>
+</span>
+</div>
+</div>
+</div>
+</body>
+</html>
+"#;
+
+/// `div.ocr_table` / `div.ocr_list` were written by `to_hocr_html` but missing
+/// from the parser's block selector, so a block retyped to TBL/LST was dropped
+/// on the next parse and its text was lost on the following save.
+#[test]
+fn test_table_and_list_roundtrip() {
+    let page = parse(TABLE_AND_LIST_PAGE, ParserConfig::default()).unwrap();
+
+    let blocks = &page.careas[0].blocks;
+    assert_eq!(blocks.len(), 3, "table and list must not be dropped");
+    assert_eq!(blocks[0].kind, HocrBlockKind::Paragraph);
+    assert_eq!(blocks[1].kind, HocrBlockKind::Table);
+    assert_eq!(blocks[2].kind, HocrBlockKind::List);
+
+    // The lines and words inside them survive too, not just the block shells.
+    assert_eq!(blocks[1].lines[0].words[0].text, "Cell");
+    assert_eq!(blocks[2].lines[0].words[0].text, "Item");
+
+    let html = page.to_hocr_html();
+    assert!(html.contains("<div class=\"ocr_table\" id=\"par_2\""));
+    assert!(html.contains("<div class=\"ocr_list\" id=\"par_3\""));
+
+    // Re-parsing the generated hOCR yields the same tree: no drift, no loss.
+    let page2 = parse(&html, ParserConfig::default()).unwrap();
+    assert_eq!(signature(&page2), signature(&page));
+    assert_eq!(
+        signature(&page2),
+        to_sig("page_1(carea_1(par_1:P(line_1(word_1)),par_2:TBL(line_2(word_2)),par_3:LST(line_3(word_3))))")
+    );
+}
+
+/// Guard against the drift that caused the TBL/LST bug: every kind the writer
+/// can emit must be a kind the reader recognises.
+#[test]
+fn test_every_block_kind_class_roundtrips() {
+    for kind in HocrBlockKind::ALL {
+        assert_eq!(
+            HocrBlockKind::from_class_name(kind.class_name()),
+            Some(kind),
+            "{kind} writes class '{}' but cannot be read back",
+            kind.class_name()
+        );
+    }
+}
+
+const STRAY_MARKUP_PAGE: &str = r#"<!DOCTYPE html>
+<html>
+<body>
+<div class="ocr_page" id="page_1" title="bbox 0 0 1000 1000">
+<div class="ocr_carea" id="carea_1" title="bbox 0 0 1000 500">
+<p class="ocr_par" id="par_1" title="bbox 0 0 1000 100">
+<span class="ocr_line" id="line_1" title="bbox 0 0 1000 100">
+<span class="ocrx_word" id="word_1" title="bbox 0 0 100 100; x_wconf 90">First</span>
+</span>
+</p>
+<hr class="ocr_separator" id="sep_1"/>
+</div>
+<div class="ocr_carea" id="carea_2" title="bbox 0 500 1000 1000">
+<p class="ocr_par" id="par_2" title="bbox 0 500 1000 600">
+<span class="ocr_line" id="line_2" title="bbox 0 500 1000 600">
+<span class="ocrx_word" id="word_2" title="bbox 0 500 100 600; x_wconf 90">Second</span>
+</span>
+</p>
+</div>
+<p class="page_footer" id="footer_1">Stray</p>
+</div>
+</body>
+</html>
+"#;
+
+/// Each carea's `unknowns` used to be collected with `(page_el, &sel_carea)`,
+/// so every carea carried a copy of the page-level unknown set instead of its
+/// own non-block children. `merge_careas` appends them, so the duplicates
+/// multiplied with each merge.
+#[test]
+fn test_carea_unknowns_are_scoped_to_their_carea() {
+    let page = parse(STRAY_MARKUP_PAGE, ParserConfig::default()).unwrap();
+
+    // The page owns the stray element that sits outside every carea.
+    assert_eq!(page.unknowns.len(), 1);
+    assert!(page.unknowns[0].string.contains("page_footer"));
+
+    // carea_1 owns the separator between its blocks, and nothing else.
+    let carea_1 = &page.careas[0];
+    assert_eq!(carea_1.unknowns.len(), 1, "only its own stray child");
+    assert!(carea_1.unknowns[0].string.contains("ocr_separator"));
+    assert!(
+        !carea_1.unknowns[0].string.contains("page_footer"),
+        "the page-level stray must not leak into a carea"
+    );
+
+    // carea_2 has no stray children at all, so it must report none.
+    assert!(
+        page.careas[1].unknowns.is_empty(),
+        "carea_2 has no non-block children, got {:?}",
+        page.careas[1].unknowns
+    );
+}
+
+/// `HocrCarea::to_hocr_html` used to emit only its blocks, so any markup the
+/// parser does not model was silently destroyed on the next save. The page
+/// level always preserved its own strays; the carea level now matches.
+#[test]
+fn test_carea_unknowns_survive_roundtrip() {
+    let page = parse(STRAY_MARKUP_PAGE, ParserConfig::default()).unwrap();
+    let html = page.to_hocr_html();
+
+    // Both levels' strays reach the file, each exactly once.
+    assert_eq!(html.matches("ocr_separator").count(), 1, "carea stray kept");
+    assert_eq!(html.matches("page_footer").count(), 1, "page stray kept");
+
+    // The separator stays inside its own carea, not hoisted to the page.
+    let carea_1_html = html
+        .split("id=\"carea_2\"")
+        .next()
+        .expect("carea_1 precedes carea_2");
+    assert!(
+        carea_1_html.contains("ocr_separator"),
+        "the separator must be serialized within carea_1"
+    );
+
+    // Re-parsing is stable: same ownership, no growth, no loss.
+    let page2 = parse(&html, ParserConfig::default()).unwrap();
+    assert_eq!(page2.unknowns.len(), 1);
+    assert!(page2.unknowns[0].string.contains("page_footer"));
+    assert_eq!(page2.careas[0].unknowns.len(), 1);
+    assert!(page2.careas[0].unknowns[0].string.contains("ocr_separator"));
+    assert!(page2.careas[1].unknowns.is_empty());
+
+    // And the blocks are untouched by the extra markup.
+    assert_eq!(signature(&page2), signature(&page));
+}

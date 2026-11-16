@@ -1211,11 +1211,6 @@ pub async fn word_rescan(
         Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e).into_response(),
     };
 
-    let Ok(_) = tokio::fs::write("/tmp/testimage.jpg", &processed_bytes).await else {
-        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-    };
-
-
     // 6. Call OCR service
     let server = {
         let settings = state.settings.read().unwrap();

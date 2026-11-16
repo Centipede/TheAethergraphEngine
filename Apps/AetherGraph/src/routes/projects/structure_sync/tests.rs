@@ -560,3 +560,59 @@ fn atomic_save_leaves_no_temp_file_behind() {
         .collect();
     assert!(leftovers.is_empty(), "stray temp files: {leftovers:?}");
 }
+
+const TABLE_AND_LIST_PAGE: &str = r#"
+<html><body>
+  <div class='ocr_page' id='page_1' title='bbox 0 0 1000 1400'>
+    <div class='ocr_carea' id='block_1_1' title="bbox 10 10 900 400">
+      <h1 class='ocr_chapter' id='par_1_1' title="bbox 10 10 900 60">
+        <span class='ocr_line' id='line_1_1' title="bbox 10 10 900 60">
+          <span class='ocrx_word' id='word_1_1' title='bbox 10 10 200 60; x_wconf 95'>Chapter</span>
+        </span>
+      </h1>
+      <div class='ocr_table' id='par_1_2' title="bbox 10 70 900 200">
+        <span class='ocr_line' id='line_1_2' title="bbox 10 70 900 200">
+          <span class='ocrx_word' id='word_1_2' title='bbox 10 70 200 200; x_wconf 95'>Cell</span>
+        </span>
+      </div>
+      <div class='ocr_list' id='par_1_3' title="bbox 10 210 900 400">
+        <span class='ocr_line' id='line_1_3' title="bbox 10 210 900 400">
+          <span class='ocrx_word' id='word_1_3' title='bbox 10 210 200 400; x_wconf 95'>Item</span>
+        </span>
+      </div>
+    </div>
+  </div>
+</body></html>
+"#;
+
+#[test]
+fn table_and_list_blocks_add_no_rows_and_orphan_nothing() {
+    // The parser used to drop table/list blocks entirely, which made a retype
+    // to TBL/LST look like a block removal and orphaned the sibling section.
+    let parsed = crate::hocr_parser::parse(TABLE_AND_LIST_PAGE, ParserConfig::default())
+        .expect("fixture should parse");
+
+    let blocks = &parsed.careas[0].blocks;
+    assert_eq!(blocks.len(), 3, "table and list must reach the model");
+
+    let found = page_headlines(&parsed, "vii");
+    assert_eq!(found.block_ids, vec!["par_1_1"], "only the chapter");
+
+    let mut db = StructureDb {
+        sections: vec![section("ch1", Some(("vii", "par_1_1")))],
+        headlines: vec![row("vii", "par_1_1", true)],
+    };
+    reconcile_pages(&mut db, std::slice::from_ref(&found));
+
+    assert_eq!(ids(&db, "vii"), vec!["par_1_1"]);
+    for not_a_headline in ["par_1_2", "par_1_3"] {
+        assert!(
+            !db.headlines.iter().any(|r| r.block_id == not_a_headline),
+            "{not_a_headline} must not become a headline"
+        );
+    }
+    assert!(
+        !find(&db.sections, "ch1").unwrap().is_orphaned,
+        "the chapter's section must survive intact"
+    );
+}

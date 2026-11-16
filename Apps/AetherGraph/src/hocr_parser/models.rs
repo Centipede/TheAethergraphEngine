@@ -422,6 +422,24 @@ impl HocrPath {
 }
 
 impl HocrBlockKind {
+    /// Every variant, in enum order. The parser derives its block selector
+    /// from this list (see `parser.rs`), so a kind missing here is a kind the
+    /// parser silently drops on the next parse. Keep it in sync with the enum,
+    /// and with `tag_name`/`class_name`/`from_class_name` below.
+    pub const ALL: [HocrBlockKind; 11] = [
+        HocrBlockKind::Paragraph,
+        HocrBlockKind::Part,
+        HocrBlockKind::Chapter,
+        HocrBlockKind::Section,
+        HocrBlockKind::Subsection,
+        HocrBlockKind::Subsubsection,
+        HocrBlockKind::Subsubsubsection,
+        HocrBlockKind::Subsubsubsubsection,
+        HocrBlockKind::Image,
+        HocrBlockKind::Table,
+        HocrBlockKind::List,
+    ];
+
     pub fn tag_name(self) -> &'static str {
         match self {
             HocrBlockKind::Image => "img",
