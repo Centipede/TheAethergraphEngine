@@ -18,6 +18,7 @@ fn test_auto_detection_reset_and_assigned() {
             test_following_terminal: Evidence::Untested,
             break_from_preceding: Evidence::Assigned(true), // Should be preserved
             break_from_following: Evidence::Suggested(false),
+            ..Default::default()
         },
         metrics: None,
         lines: vec![],
@@ -374,4 +375,244 @@ fn test_four_value_detection_logic() {
 
     // y_advance = 2. certainly_true: 10, suggested_true: 5, suggested_false: 3. 2 <= 3 -> Suggested(false)
     assert_eq!(block.hints.test_y_advance, Evidence::Suggested(false));
+}
+
+// ── Cross-boundary conflicts ─────────────────────────────────────────
+
+/// A provider holding pages in memory, so the cross-boundary pass can be
+/// exercised without touching the filesystem.
+struct MapProvider {
+    pages: Vec<(String, HocrPage)>,
+}
+
+impl crate::hocr_parser::navigation::HocrPageProvider for MapProvider {
+    fn get_page(&self, page_id: &str) -> Option<HocrPage> {
+        self.pages
+            .iter()
+            .find(|(id, _)| id == page_id)
+            .map(|(_, page)| page.clone())
+    }
+
+    fn get_page_order(&self) -> Vec<String> {
+        self.pages.iter().map(|(id, _)| id.clone()).collect()
+    }
+}
+
+fn conflict_block(id: &str, top: i32, from_preceding: Evidence, from_following: Evidence) -> HocrBlock {
+    HocrBlock {
+        id: id.to_string(),
+        level: "block".to_string(),
+        kind: HocrBlockKind::Paragraph,
+        lang: None,
+        bbox: HocrBbox([100, top, 500, top + 80]),
+        hints: HocrBlockHints {
+            break_from_preceding: from_preceding,
+            break_from_following: from_following,
+            ..Default::default()
+        },
+        metrics: None,
+        lines: vec![],
+    }
+}
+
+fn page_with(page_id: &str, careas: Vec<HocrCarea>) -> HocrPage {
+    HocrPage {
+        level: "page".to_string(),
+        page_id: page_id.to_string(),
+        bbox: HocrBbox::new(0, 0, 1000, 1000),
+        careas,
+        unknowns: vec![],
+    }
+}
+
+fn carea_with(id: &str, flow: Option<&str>, blocks: Vec<HocrBlock>) -> HocrCarea {
+    HocrCarea {
+        level: "carea".to_string(),
+        id: id.to_string(),
+        bbox: HocrBbox::new(100, 0, 500, 1000),
+        flow: flow.map(str::to_string),
+        layout: None,
+        blocks,
+        unknowns: vec![],
+    }
+}
+
+#[test]
+fn test_boundary_conflict_truth_table() {
+    use operations::boundary_conflict;
+
+    // An unanalysed neighbour gives nothing to compare against.
+    let a = conflict_block("a", 0, Evidence::Untested, Evidence::Untested);
+    let b = conflict_block("b", 100, Evidence::Determined(true), Evidence::Untested);
+    assert_eq!(boundary_conflict(&a, &b), Evidence::Untested);
+    assert_eq!(boundary_conflict(&b, &a), Evidence::Untested);
+
+    // Sides agree: both say the paragraph breaks at this edge.
+    let a = conflict_block("a", 0, Evidence::Untested, Evidence::Determined(true));
+    let b = conflict_block("b", 100, Evidence::Determined(true), Evidence::Untested);
+    assert_eq!(boundary_conflict(&a, &b), Evidence::Determined(false));
+
+    // Sides agree: both say it continues.
+    let a = conflict_block("a", 0, Evidence::Untested, Evidence::Suggested(false));
+    let b = conflict_block("b", 100, Evidence::Suggested(false), Evidence::Untested);
+    assert_eq!(boundary_conflict(&a, &b), Evidence::Determined(false));
+
+    // Hard conflict: one side is Determined.
+    let a = conflict_block("a", 0, Evidence::Untested, Evidence::Determined(true));
+    let b = conflict_block("b", 100, Evidence::Suggested(false), Evidence::Untested);
+    assert_eq!(boundary_conflict(&a, &b), Evidence::Determined(true));
+
+    // Hard conflict: one side was assigned by the user.
+    let a = conflict_block("a", 0, Evidence::Untested, Evidence::Assigned(false));
+    let b = conflict_block("b", 100, Evidence::Suggested(true), Evidence::Untested);
+    assert_eq!(boundary_conflict(&a, &b), Evidence::Determined(true));
+
+    // Soft conflict: the disagreement rests on suggestions only.
+    let a = conflict_block("a", 0, Evidence::Untested, Evidence::Suggested(true));
+    let b = conflict_block("b", 100, Evidence::Suggested(false), Evidence::Untested);
+    assert_eq!(boundary_conflict(&a, &b), Evidence::Suggested(true));
+
+    // A block that already contradicts itself cannot vouch for its edges.
+    let a = conflict_block("a", 0, Evidence::Untested, Evidence::Error);
+    let b = conflict_block("b", 100, Evidence::Determined(false), Evidence::Untested);
+    assert_eq!(boundary_conflict(&a, &b), Evidence::Determined(true));
+
+    // An undecided side yields no verdict either way.
+    let a = conflict_block("a", 0, Evidence::Untested, Evidence::Undetermined);
+    let b = conflict_block("b", 100, Evidence::Determined(true), Evidence::Untested);
+    assert_eq!(boundary_conflict(&a, &b), Evidence::Undetermined);
+}
+
+#[test]
+fn test_annotate_cross_boundaries_marks_both_blocks() {
+    // b1 says it continues into b2; b2 says it breaks from b1.
+    let b1 = conflict_block("b1", 0, Evidence::Untested, Evidence::Determined(false));
+    let b2 = conflict_block("b2", 100, Evidence::Determined(true), Evidence::Untested);
+    let mut page = page_with("page1", vec![carea_with("c1", Some("main"), vec![b1, b2])]);
+
+    let provider = MapProvider { pages: vec![("page1".to_string(), page.clone())] };
+    page.annotate_cross_boundaries(&provider, "page1");
+
+    let blocks = &page.careas[0].blocks;
+    // The shared edge is flagged on both sides of it.
+    assert_eq!(blocks[0].hints.conflict_with_following, Evidence::Determined(true));
+    assert_eq!(blocks[1].hints.conflict_with_preceding, Evidence::Determined(true));
+    // The outer edges have no neighbour in this flow.
+    assert_eq!(blocks[0].hints.conflict_with_preceding, Evidence::Untested);
+    assert_eq!(blocks[1].hints.conflict_with_following, Evidence::Untested);
+}
+
+#[test]
+fn test_annotate_cross_boundaries_respects_flows() {
+    // Identical disagreement, but the two blocks sit in different flows and so
+    // never share a boundary.
+    let b1 = conflict_block("b1", 0, Evidence::Untested, Evidence::Determined(false));
+    let b2 = conflict_block("b2", 100, Evidence::Determined(true), Evidence::Untested);
+    let mut page = page_with(
+        "page1",
+        vec![
+            carea_with("c1", Some("main"), vec![b1]),
+            carea_with("c2", Some("footnote"), vec![b2]),
+        ],
+    );
+
+    let provider = MapProvider { pages: vec![("page1".to_string(), page.clone())] };
+    page.annotate_cross_boundaries(&provider, "page1");
+
+    assert_eq!(page.careas[0].blocks[0].hints.conflict_with_following, Evidence::Untested);
+    assert_eq!(page.careas[1].blocks[0].hints.conflict_with_preceding, Evidence::Untested);
+}
+
+#[test]
+fn test_annotate_cross_boundaries_spans_pages() {
+    // The flow continues onto page2, so the last block of page1 is compared
+    // against the first block of page2.
+    let p1_block = conflict_block("b1", 0, Evidence::Untested, Evidence::Determined(false));
+    let p2_block = conflict_block("b2", 0, Evidence::Assigned(true), Evidence::Untested);
+
+    let mut page1 = page_with("page1", vec![carea_with("c1", Some("main"), vec![p1_block])]);
+    let page2 = page_with("page2", vec![carea_with("c2", Some("main"), vec![p2_block])]);
+
+    let provider = MapProvider {
+        pages: vec![
+            ("page1".to_string(), page1.clone()),
+            ("page2".to_string(), page2.clone()),
+        ],
+    };
+    page1.annotate_cross_boundaries(&provider, "page1");
+
+    assert_eq!(
+        page1.careas[0].blocks[0].hints.conflict_with_following,
+        Evidence::Determined(true)
+    );
+}
+
+#[test]
+fn test_auto_bridge_clears_stale_conflict() {
+    // auto_bridge sees one block at a time, so it must never leave a verdict
+    // that was derived from a neighbour it cannot see.
+    let mut block = conflict_block("b1", 0, Evidence::Untested, Evidence::Untested);
+    block.hints.conflict_with_preceding = Evidence::Determined(true);
+    block.hints.conflict_with_following = Evidence::Suggested(true);
+
+    block.auto_bridge(None, None, "page1", HocrPath::Block { carea: 0, block: 0 }, &DetectionThresholds::default());
+
+    assert_eq!(block.hints.conflict_with_preceding, Evidence::Untested);
+    assert_eq!(block.hints.conflict_with_following, Evidence::Untested);
+}
+
+#[test]
+fn test_hyphenation_feeds_break_from_following() {
+    let hyphenated = |text: &str| HocrBlock {
+        id: "b1".to_string(),
+        level: "block".to_string(),
+        kind: HocrBlockKind::Paragraph,
+        lang: None,
+        bbox: HocrBbox([100, 100, 500, 200]),
+        hints: HocrBlockHints::default(),
+        metrics: None,
+        lines: vec![HocrLine {
+            level: "line".to_string(),
+            id: "l1".to_string(),
+            bbox: HocrBbox([100, 100, 500, 200]),
+            lang: None,
+            words: vec![HocrWord {
+                level: "word".to_string(),
+                id: "w1".to_string(),
+                bbox: HocrBbox([100, 100, 500, 200]),
+                lang: None,
+                text: text.to_string(),
+                wconf: 95,
+                dropcap: None,
+            }],
+            baseline: None,
+            x_size: None,
+            x_descenders: None,
+            x_ascenders: None,
+        }],
+    };
+
+    // Only hyphenation is in play; every geometric test is switched off.
+    let thresholds = DetectionThresholds {
+        use_x_indent: false,
+        use_x_dedent: false,
+        use_y_advance: false,
+        use_hyphenation: true,
+        ..DetectionThresholds::default()
+    };
+    let path = HocrPath::Block { carea: 0, block: 0 };
+
+    // A trailing hyphen means the paragraph carries on: it does NOT break.
+    let mut block = hyphenated("contin-");
+    block.update_metrics(None, None, "page1", path);
+    block.auto_bridge(None, None, "page1", path, &thresholds);
+    assert_eq!(block.hints.test_hyphenation, Evidence::Suggested(true));
+    assert_eq!(block.hints.break_from_following, Evidence::Suggested(false));
+
+    // No hyphen is weak evidence the other way.
+    let mut block = hyphenated("end.");
+    block.update_metrics(None, None, "page1", path);
+    block.auto_bridge(None, None, "page1", path, &thresholds);
+    assert_eq!(block.hints.test_hyphenation, Evidence::Suggested(false));
+    assert_eq!(block.hints.break_from_following, Evidence::Suggested(true));
 }

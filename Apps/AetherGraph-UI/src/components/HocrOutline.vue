@@ -49,6 +49,12 @@
                   {{ param.label }}
                 </div>
               </template>
+              <div v-if="conflictStrength(block.hints.conflict_with_preceding)"
+                   class="hocr-hint-tag"
+                   :class="`ev-conflict-${conflictStrength(block.hints.conflict_with_preceding)}`"
+                   :title="conflictTitle('preceding', block.hints)">
+                ⚠ conflict
+              </div>
               <div v-if="isAssigned(block.hints.break_from_preceding)" class="hocr-hint-tag" :class="getEvidenceClass(block.hints.break_from_preceding)" title="Manually assigned by user">
                 user
               </div>
@@ -65,6 +71,12 @@
                   {{ param.label }}
                 </div>
               </template>
+              <div v-if="conflictStrength(block.hints.conflict_with_following)"
+                   class="hocr-hint-tag"
+                   :class="`ev-conflict-${conflictStrength(block.hints.conflict_with_following)}`"
+                   :title="conflictTitle('following', block.hints)">
+                ⚠ conflict
+              </div>
               <div v-if="isAssigned(block.hints.break_from_following)" class="hocr-hint-tag" :class="getEvidenceClass(block.hints.break_from_following)" title="Manually assigned by user">
                 user
               </div>
@@ -123,7 +135,7 @@
 import {inject, reactive, ref, watch} from 'vue';
 import type { Ref } from 'vue';
 import { useHocrContext } from '../composables/useHocr';
-import type { HocrLevel, HocrCarea, HocrBlock, HocrLine, HocrWord, EditorPalette, Evidence } from '../types';
+import type { HocrLevel, HocrCarea, HocrBlock, HocrBlockHints, HocrLine, HocrWord, EditorPalette, Evidence } from '../types';
 import { DEFAULT_PALETTE, findMultilevelById } from '../types';
 import type { FlowSchema, LayoutSchema, ColorSpecification } from '../types';
 import { applyColorSpecs } from '../utils/colors';
@@ -229,6 +241,30 @@ function getEvidenceValue(ev?: Evidence): boolean | null {
 
 function isAssigned(ev?: Evidence): boolean {
   return typeof ev === 'object' && ev !== null && 'assigned' in ev;
+}
+
+function conflictStrength(ev?: Evidence): 'hard' | 'soft' | null {
+  if (!ev || typeof ev === 'string') return null;
+  if ('determined' in ev) return ev.determined ? 'hard' : null;
+  if ('assigned' in ev) return ev.assigned ? 'hard' : null;
+  if ('suggested' in ev) return ev.suggested ? 'soft' : null;
+  return null;
+}
+
+function conflictTitle(direction: 'preceding' | 'following', hints: HocrBlockHints): string {
+  const neighbour = direction === 'preceding' ? 'the preceding block' : 'the following block';
+  const mine = direction === 'preceding' ? hints.break_from_preceding : hints.break_from_following;
+  const myVal = getEvidenceValue(mine);
+  const soft = conflictStrength(
+      direction === 'preceding' ? hints.conflict_with_preceding : hints.conflict_with_following,
+  ) === 'soft';
+  const lead = soft ? 'Possible conflict' : 'Conflict';
+
+  if (myVal === null) return `${lead} at the boundary with ${neighbour}`;
+  if (myVal) {
+    return `${lead}: this block breaks from ${neighbour}, but ${neighbour} continues across the boundary`;
+  }
+  return `${lead}: this block continues across the boundary, but ${neighbour} breaks from it`;
 }
 
 function getConclusionTitle(direction: 'preceding' | 'following', ev: Evidence): string {
@@ -601,5 +637,16 @@ function careaPreview(carea: HocrCarea, maxLen = 60): string {
   color: var(--sl-color-red-900);
   border-color: var(--sl-color-red-300);
   background: var(--sl-color-red-200);
+}
+
+.ev-conflict-hard {
+  color: var(--sl-color-red-900);
+  border-color: var(--sl-color-red-400);
+  background: var(--sl-color-red-200);
+}
+.ev-conflict-soft {
+  color: var(--sl-color-red-800);
+  border-color: var(--sl-color-red-200);
+  background: var(--sl-color-red-50);
 }
 </style>

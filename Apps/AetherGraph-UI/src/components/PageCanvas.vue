@@ -84,6 +84,32 @@
                 ⚠
               </div>
 
+              <!-- Undetermined: we looked and could not decide. Distinct from
+                   'untested', which renders nothing at all. -->
+              <div v-if="item.hints.break_from_preceding === 'undetermined'"
+                   class="hocr-block-evidence hocr-block-evidence--preceding ev-undetermined">
+                ◌
+              </div>
+              <div v-if="item.hints.break_from_following === 'undetermined'"
+                   class="hocr-block-evidence hocr-block-evidence--following ev-undetermined">
+                ◌
+              </div>
+
+              <!-- Cross-boundary conflict: this block and its neighbour
+                   disagree about the edge they share. -->
+              <div v-if="conflictStrength(item.hints.conflict_with_preceding)"
+                   class="hocr-block-evidence hocr-block-evidence--conflict-preceding"
+                   :class="`ev-conflict-${conflictStrength(item.hints.conflict_with_preceding)}`"
+                   :title="conflictTitle('preceding', item)">
+                ⚠
+              </div>
+              <div v-if="conflictStrength(item.hints.conflict_with_following)"
+                   class="hocr-block-evidence hocr-block-evidence--conflict-following"
+                   :class="`ev-conflict-${conflictStrength(item.hints.conflict_with_following)}`"
+                   :title="conflictTitle('following', item)">
+                ⚠
+              </div>
+
               <div class="hocr-block-hints-container hocr-block-hints-container--top">
                 <div v-if="item.hints.test_y_reverse && getEvidenceValue(item.hints.test_y_reverse) !== null"
                      class="hocr-block-evidence"
@@ -855,6 +881,28 @@ function getEvidenceValue(ev: Evidence): boolean | null {
   return null;
 }
 
+function conflictStrength(ev?: Evidence): 'hard' | 'soft' | null {
+  if (!ev || typeof ev === 'string') return null;
+  if ('determined' in ev) return ev.determined ? 'hard' : null;
+  if ('assigned' in ev) return ev.assigned ? 'hard' : null;
+  if ('suggested' in ev) return ev.suggested ? 'soft' : null;
+  return null;
+}
+
+function conflictTitle(direction: 'preceding' | 'following', item: OverlayItem): string {
+  const neighbour = direction === 'preceding' ? 'the preceding block' : 'the following block';
+  const mine = direction === 'preceding'
+      ? item.hints?.break_from_preceding
+      : item.hints?.break_from_following;
+  const myVal = mine ? getEvidenceValue(mine) : null;
+
+  if (myVal === null) return `Conflict at the boundary with ${neighbour}`;
+  if (myVal) {
+    return `Conflict: this block breaks from ${neighbour}, but ${neighbour} continues across the boundary`;
+  }
+  return `Conflict: this block continues across the boundary, but ${neighbour} breaks from it`;
+}
+
 function overlayItemAlignWithWord(item: OverlayItem, wordBbox: HocrBbox, type: 'indent' | 'dedent') {
   const [bl, bt, br, bb] = item.bbox;
   const [wl, wt, wr, wb] = wordBbox;
@@ -1277,6 +1325,24 @@ function overlayItemStyle(item: OverlayItem) {
 .ev-val-false.ev-assigned { color: var(--sl-color-sky-700); opacity: 1; }
 
 .ev-error { color: var(--sl-color-red-600); opacity: 1; font-size: 1.2rem; }
+
+/* Cross-boundary conflict markers sit just inboard of the conclusion glyph in
+   the same corner, so both stay readable. */
+.hocr-block-evidence--conflict-preceding {
+  top: 0;
+  left: 0;
+  transform: translate(60%, -90%);
+}
+.hocr-block-evidence--conflict-following {
+  bottom: 0;
+  right: 0;
+  transform: translate(-60%, 90%);
+}
+
+.ev-conflict-hard { color: var(--sl-color-red-600); opacity: 1; font-size: 1.2rem; }
+.ev-conflict-soft { color: var(--sl-color-red-600); opacity: 0.45; font-size: 1.1rem; }
+
+.ev-undetermined { color: var(--sl-color-neutral-500); opacity: 0.6; font-size: 1rem; }
 
 img {
   -webkit-user-select: none;

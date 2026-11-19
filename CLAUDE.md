@@ -53,6 +53,13 @@ npm run build   # compile into Apps/AetherGraph/static/ (do before cargo build f
 - Each weekend (Saturday-Sunday) is where the actual development happens. First order of business is to wrap up the planning branch.
 - When the weekend finishes, the result is squash merged into the main branch.
 - Copy PR description into the squash commit.
+- Leave numbers out of the PR title. GitHub appends the PR number itself on
+  merge, and the PR already records which branch was merged, so citing the
+  branch or the planning issue in the title is duplicated effort.
+- This is a one-person team, so keep git and PR overhead to a minimum. Don't ask
+  which issue number to cite, don't hand-add cross-references GitHub already
+  tracks, and don't propose extra ceremony (per-concern commits, changelog
+  files, manual issue links) unless asked for it.
 - The PR message must look like:
 
 ```

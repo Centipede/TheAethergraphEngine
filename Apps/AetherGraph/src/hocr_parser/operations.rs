@@ -110,6 +110,71 @@ impl HocrPage {
         }
     }
 
+    /// Fills in each block's `conflict_with_preceding` / `conflict_with_following`
+    /// by comparing its own boundary conclusions against those its neighbours
+    /// reached. Both sides of an in-page boundary are visited here, so a
+    /// conflict is marked on both blocks; a boundary that straddles two pages
+    /// is marked on this page here and on the other page by that page's own
+    /// pass.
+    ///
+    /// This is derived state: it is recomputed on read and never written to
+    /// hOCR, so it can never go stale against the conclusions it summarises.
+    pub fn annotate_cross_boundaries(&mut self, provider: &dyn HocrPageProvider, stem: &str) {
+        let mut blocks_with_paths: HashMap<String, HocrBlock> = HashMap::new();
+        let mut flows_blocks: HashMap<String, Vec<String>> = HashMap::new();
+
+        for carea in self.careas.iter() {
+            if let Some(ref flow) = carea.flow {
+                let entry = flows_blocks.entry(flow.clone()).or_default();
+                for block in carea.blocks.iter() {
+                    blocks_with_paths.insert(block.id.clone(), block.clone());
+                    entry.push(block.id.clone());
+                }
+            }
+        }
+
+        // Phase 1: decide every verdict against immutable clones.
+        let mut verdicts: Vec<(HocrPath, Evidence, Evidence)> = Vec::new();
+
+        for (_flow, ids) in flows_blocks {
+            for i in 0..ids.len() {
+                let block_id = &ids[i];
+                let Some(me) = blocks_with_paths.get(block_id) else { continue };
+                let Some(path) = self.get_block_path(block_id) else { continue };
+
+                let preceding = if i > 0 {
+                    blocks_with_paths.get(&ids[i - 1]).cloned()
+                } else {
+                    preceding_block(provider, stem, block_id).map(|(b, _, _)| b)
+                };
+
+                let following = if i < ids.len() - 1 {
+                    blocks_with_paths.get(&ids[i + 1]).cloned()
+                } else {
+                    succeeding_block(provider, stem, block_id).map(|(b, _, _)| b)
+                };
+
+                let from_preceding = preceding
+                    .as_ref()
+                    .map_or(Evidence::Untested, |prev| boundary_conflict(prev, me));
+                let from_following = following
+                    .as_ref()
+                    .map_or(Evidence::Untested, |next| boundary_conflict(me, next));
+
+                verdicts.push((path, from_preceding, from_following));
+            }
+        }
+
+        // Phase 2: write them back.
+        for (path, from_preceding, from_following) in verdicts {
+            if let HocrPath::Block { carea, block } = path {
+                let hints = &mut self.careas[carea].blocks[block].hints;
+                hints.conflict_with_preceding = from_preceding;
+                hints.conflict_with_following = from_following;
+            }
+        }
+    }
+
     pub fn inject_images(&mut self, bboxes: Vec<HocrBbox>) {
         for bbox in bboxes {
             // Add as an image block, letting the engine find the best carea/vertical position
@@ -1167,6 +1232,18 @@ impl HocrPage {
     }
 }
 
+/// Flips the boolean of a verdict while preserving its strength, leaving the
+/// valueless variants alone. Needed where a test is phrased in the opposite
+/// polarity to the conclusion it feeds.
+pub(crate) fn negate_evidence(e: Evidence) -> Evidence {
+    match e {
+        Evidence::Suggested(b) => Evidence::Suggested(!b),
+        Evidence::Determined(b) => Evidence::Determined(!b),
+        Evidence::Assigned(b) => Evidence::Assigned(!b),
+        other => other,
+    }
+}
+
 pub(crate) fn derive_evidence(tests: &[Evidence]) -> Evidence {
     let mut det_true = false;
     let mut det_false = false;
@@ -1203,6 +1280,49 @@ pub(crate) fn derive_evidence(tests: &[Evidence]) -> Evidence {
         Evidence::Suggested(b)
     } else {
         Evidence::Undetermined
+    }
+}
+
+/// Verdict for the boundary between `a` (the earlier block) and `b` (the later
+/// block). `a.hints.break_from_following` and `b.hints.break_from_preceding`
+/// describe the very same edge, so they must agree; this reports whether they
+/// do.
+///
+/// The returned `Evidence` carries "a conflict exists" as its boolean, and its
+/// strength mirrors the strength of the disagreeing sides:
+///
+/// * `Untested`          - a side has not been analysed, so nothing to compare
+/// * `Undetermined`      - a side reached no usable verdict
+/// * `Determined(false)` - the two sides agree
+/// * `Suggested(true)`   - soft conflict, both sides only `Suggested`
+/// * `Determined(true)`  - hard conflict, a side is `Determined`/`Assigned`
+pub fn boundary_conflict(a: &HocrBlock, b: &HocrBlock) -> Evidence {
+    let a_side = a.hints.break_from_following;
+    let b_side = b.hints.break_from_preceding;
+
+    // Nothing to compare until both sides have been looked at.
+    if matches!(a_side, Evidence::Untested) || matches!(b_side, Evidence::Untested) {
+        return Evidence::Untested;
+    }
+
+    // A block that already contradicts itself cannot vouch for its edges.
+    if matches!(a_side, Evidence::Error) || matches!(b_side, Evidence::Error) {
+        return Evidence::Determined(true);
+    }
+
+    let (Some(a_val), Some(b_val)) = (a_side.is_true(), b_side.is_true()) else {
+        return Evidence::Undetermined;
+    };
+
+    if a_val == b_val {
+        return Evidence::Determined(false);
+    }
+
+    let strong = |e: Evidence| matches!(e, Evidence::Determined(_) | Evidence::Assigned(_));
+    if strong(a_side) || strong(b_side) {
+        Evidence::Determined(true)
+    } else {
+        Evidence::Suggested(true)
     }
 }
 
@@ -1296,6 +1416,12 @@ impl HocrBlock {
         if !matches!(self.hints.break_from_preceding, Evidence::Assigned(_)) { self.hints.break_from_preceding = Evidence::Untested; }
         if !matches!(self.hints.break_from_following, Evidence::Assigned(_)) { self.hints.break_from_following = Evidence::Untested; }
 
+        // Cross-boundary verdicts are derived from both sides of an edge, so
+        // this function -- which only ever sees one block -- must not leave an
+        // old value standing. `HocrPage::annotate_cross_boundaries` owns them.
+        self.hints.conflict_with_preceding = Evidence::Untested;
+        self.hints.conflict_with_following = Evidence::Untested;
+
         // Only paragraphs participate in considerations of continuation. All headers images, lists and tables live alone and cannot be continued.
         if !matches!(self.kind, HocrBlockKind::Paragraph) {
             if !matches!(self.hints.break_from_preceding, Evidence::Assigned(_)) { self.hints.break_from_preceding = Evidence::Determined(true); }
@@ -1383,27 +1509,27 @@ impl HocrBlock {
 
         // 3. Mid level calculations
         if !matches!(self.hints.break_from_preceding, Evidence::Assigned(_)) {
-            self.hints.break_from_preceding =
-                derive_evidence(&[self.hints.test_preceding_terminal, self.hints.test_x_indent, self.hints.test_y_reverse, self.hints.test_preceding_terminal]);
+            self.hints.break_from_preceding = derive_evidence(&[
+                self.hints.test_preceding_terminal,
+                self.hints.test_x_indent,
+                self.hints.test_y_reverse,
+            ]);
         }
 
         if !matches!(self.hints.break_from_following, Evidence::Assigned(_)) {
-            self.hints.break_from_following =
-                derive_evidence(&[self.hints.test_following_terminal, self.hints.test_x_dedent, self.hints.test_y_advance, self.hints.test_following_terminal]);
+            // `test_hyphenation` is stored in the opposite polarity to the rest:
+            // it reads "a trailing hyphen is present", and a trailing hyphen
+            // means the paragraph *continues*. It comes last so it only breaks
+            // ties the geometric tests could not settle.
+            self.hints.break_from_following = derive_evidence(&[
+                self.hints.test_following_terminal,
+                self.hints.test_x_dedent,
+                self.hints.test_y_advance,
+                negate_evidence(self.hints.test_hyphenation),
+            ]);
         }
     }
 
-    pub fn get_continued_evidence(a: &HocrBlock, b: &HocrBlock) -> Evidence {
-        let a_break = a.hints.break_from_following.is_true();
-        let b_break = b.hints.break_from_preceding.is_true();
-
-        match (a_break, b_break) {
-            (Some(false), Some(false)) => Evidence::Determined(true),
-            (Some(true), Some(true)) => Evidence::Determined(false),
-            (Some(av), Some(bv)) if av != bv => Evidence::Error,
-            _ => Evidence::Undetermined,
-        }
-    }
 }
 
 pub fn y_advance(a: &HocrBlock, b: &HocrBlock) -> i32 {
