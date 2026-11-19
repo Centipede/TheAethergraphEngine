@@ -35,6 +35,7 @@
               :show-tool-info-bars="false"
               :show-badges="false"
               :show-block-hints="true"
+              :show-all-evidence="showAllEvidence"
               :reload-trigger="hocrReloadTrigger[page.scan.replace(/\.[^.]+$/, '')]"
               :interaction-update="makeInteractionUpdateHandler(page)"
               :interaction-click="() => onInteractionClick(page)"
@@ -51,6 +52,7 @@
           :project="project"
           :thresholds="thresholds"
           v-model:flowSet="flowSet"
+          v-model:showAllEvidence="showAllEvidence"
           @threshold-change="onThresholdChange"
           @auto-bridge-page="onAutoBridgePage"
           @auto-bridge-block="onAutoBridgeBlock"
@@ -85,6 +87,10 @@ const layouts = computed(() => project.value?.layouts || []);
 
 const selectedBlockId = ref<string | null>(null);
 const flowSet = ref<Set<string>>(new Set());
+// Off by default: the canvas shows a verdict per edge, and the reasoning behind
+// it follows the pointer. Turning this on brings every block's evidence up at
+// once, for when the detection itself is what is being judged.
+const showAllEvidence = ref(false);
 const selectedPageScan = ref<string | null>(null);
 const hoveredItemId = ref<string | null>(null);
 

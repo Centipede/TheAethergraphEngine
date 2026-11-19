@@ -7,6 +7,7 @@
       :image-base-url="imageBaseUrl"
       :presentationOnly="presentationOnly"
       :show-block-hints="showBlockHints"
+      :show-all-evidence="showAllEvidence"
       :show-tool-info-bars="showToolInfoBars"
       :show-badges="showBadges"
       hocrLevel="block"
@@ -29,6 +30,7 @@ const props = defineProps<{
   machineName: string;
   imageBaseUrl: string;
   showBlockHints?: boolean;
+  showAllEvidence?: boolean;
   showToolInfoBars?: boolean;
   showBadges?: boolean;
   presentationOnly?: boolean;

@@ -1,5 +1,5 @@
 <template>
-  <div class="page-canvas" :class="{ 'page-canvas--hide-toolbars': !showToolInfoBars }">
+  <div class="page-canvas" :class="{ 'page-canvas--hide-toolbars': !showToolInfoBars, 'page-canvas--all-evidence': showAllEvidence }">
     <div class="page-canvas-toolbar" v-if="!presentationOnly">
       <sl-checkbox size="small" :checked="showConfidence" @sl-change="showConfidence = $event.target.checked">Confidence</sl-checkbox>
       <sl-checkbox size="small" :checked="applyProcessing" @sl-change="applyProcessing = $event.target.checked">Processing</sl-checkbox>
@@ -62,91 +62,65 @@
               <span class="hocr-overlay-item-id">{{ item.id }}</span>
             </div>
 
-            <!-- BLOCK HINTS (break/continue paragraph) : Nice symbols: ⮬⮯⬞ -->
+            <!-- BLOCK HINTS (break/continue paragraph) -->
 
-            <div v-if="showBlockHints && item.level === 'block' && item.hints && !isDimmed(item)" class="hocr-block-hints">
-              <div v-if="item.hints.break_from_preceding && getEvidenceValue(item.hints.break_from_preceding) !== null"
-                   class="hocr-block-evidence hocr-block-evidence--preceding"
-                   :class="getEvidenceClass(item.hints.break_from_preceding)">
-                {{ getEvidenceValue(item.hints.break_from_preceding) === true ? '◇' : '⬉' }}
-              </div>
-              <div v-if="item.hints.break_from_following && getEvidenceValue(item.hints.break_from_following) !== null"
-                   class="hocr-block-evidence hocr-block-evidence--following"
-                   :class="getEvidenceClass(item.hints.break_from_following)">
-                {{ getEvidenceValue(item.hints.break_from_following) === true ? '◇' : '⬊' }}
-              </div>
-              <div v-if="item.hints.break_from_preceding === 'error'"
-                   class="hocr-block-evidence hocr-block-evidence--preceding ev-error">
-                ⚠
-              </div>
-              <div v-if="item.hints.break_from_following === 'error'"
-                   class="hocr-block-evidence hocr-block-evidence--following ev-error">
-                ⚠
-              </div>
+            <div v-if="showBlockHints && item.level === 'block' && item.hints && !isDimmed(item)"
+                 class="hocr-block-hints">
 
-              <!-- Undetermined: we looked and could not decide. Distinct from
-                   'untested', which renders nothing at all. -->
-              <div v-if="item.hints.break_from_preceding === 'undetermined'"
-                   class="hocr-block-evidence hocr-block-evidence--preceding ev-undetermined">
-                ◌
-              </div>
-              <div v-if="item.hints.break_from_following === 'undetermined'"
-                   class="hocr-block-evidence hocr-block-evidence--following ev-undetermined">
-                ◌
+              <!-- One marker per edge, always on. Every outcome -- break,
+                   continue, a quarrel with the neighbour, a block that
+                   contradicts itself, or no decision -- is a value of the same
+                   verdict, so it is one icon rather than a stack of them. -->
+              <div v-for="edge in (['preceding', 'following'] as const)"
+                   :key="edge"
+                   v-show="verdictFor(item.hints, edge)"
+                   class="hocr-block-evidence"
+                   :class="[`hocr-block-evidence--${edge}`, verdictClass(item.hints, edge)]">
+                <EvidenceIcon
+                    v-if="verdictFor(item.hints, edge)"
+                    kind="verdict"
+                    :verdict="verdictFor(item.hints, edge)!"
+                    :evidence="verdictEvidence(item.hints, edge)"
+                    :size="18"
+                />
               </div>
 
-              <!-- Cross-boundary conflict: this block and its neighbour
-                   disagree about the edge they share. -->
-              <div v-if="conflictStrength(item.hints.conflict_with_preceding)"
-                   class="hocr-block-evidence hocr-block-evidence--conflict-preceding"
-                   :class="`ev-conflict-${conflictStrength(item.hints.conflict_with_preceding)}`"
-                   :title="conflictTitle('preceding', item)">
-                ⚠
-              </div>
-              <div v-if="conflictStrength(item.hints.conflict_with_following)"
-                   class="hocr-block-evidence hocr-block-evidence--conflict-following"
-                   :class="`ev-conflict-${conflictStrength(item.hints.conflict_with_following)}`"
-                   :title="conflictTitle('following', item)">
-                ⚠
-              </div>
-
-              <div class="hocr-block-hints-container hocr-block-hints-container--top">
-                <div v-if="item.hints.test_y_reverse && getEvidenceValue(item.hints.test_y_reverse) !== null"
-                     class="hocr-block-evidence"
-                     :class="getEvidenceClass(item.hints.test_y_reverse)">
-                  ⬓
+              <!-- The reasoning behind those verdicts. Hidden until the block
+                   is hovered or selected (see the CSS below), because showing
+                   it for every block at once buries the page. -->
+              <div class="hocr-block-evidence-group">
+                <div class="hocr-block-hints-container hocr-block-hints-container--top">
+                  <div v-for="t in precedingTests"
+                       :key="t.key"
+                       v-show="hasEvidence(item.hints[t.key])"
+                       class="hocr-block-evidence"
+                       :class="getEvidenceClass(item.hints[t.key]!)">
+                    <EvidenceIcon :kind="t.kind" :evidence="item.hints[t.key]" />
+                  </div>
                 </div>
-                <div v-if="item.hints.test_preceding_terminal && getEvidenceValue(item.hints.test_preceding_terminal) !== null"
-                     class="hocr-block-evidence"
-                     :class="getEvidenceClass(item.hints.test_preceding_terminal)">
-                  ⍑
-                </div>
-              </div>
 
-              <div class="hocr-block-hints-container hocr-block-hints-container--bottom">
-                <div v-if="item.hints.test_y_advance && getEvidenceValue(item.hints.test_y_advance) !== null"
-                     class="hocr-block-evidence"
-                     :class="getEvidenceClass(item.hints.test_y_advance)">
-                  ⬒
+                <div class="hocr-block-hints-container hocr-block-hints-container--bottom">
+                  <div v-for="t in followingTests"
+                       :key="t.key"
+                       v-show="hasEvidence(item.hints[t.key])"
+                       class="hocr-block-evidence"
+                       :class="getEvidenceClass(item.hints[t.key]!)">
+                    <EvidenceIcon :kind="t.kind" :evidence="item.hints[t.key]" />
+                  </div>
                 </div>
-                <div v-if="item.hints.test_following_terminal && getEvidenceValue(item.hints.test_following_terminal) !== null"
-                     class="hocr-block-evidence"
-                     :class="getEvidenceClass(item.hints.test_following_terminal)">
-                  ⍊
-                </div>
-              </div>
 
-              <div v-if="item.hints.test_x_indent && getEvidenceValue(item.hints.test_x_indent) === true && item.firstWordBbox"
-                   class="hocr-block-evidence hocr-block-evidence--indent"
-                   :class="getEvidenceClass(item.hints.test_x_indent)"
-                   :style="overlayItemAlignWithWord(item, item.firstWordBbox, 'indent')">
-                ⎡
-              </div>
-              <div v-if="item.hints.test_x_dedent && getEvidenceValue(item.hints.test_x_dedent) === true && item.lastWordBbox"
-                   class="hocr-block-evidence hocr-block-evidence--dedent"
-                   :class="getEvidenceClass(item.hints.test_x_dedent)"
-                   :style="overlayItemAlignWithWord(item, item.lastWordBbox, 'dedent')">
-                ⎦
+                <div v-if="hasEvidence(item.hints.test_x_indent) && item.firstWordBbox"
+                     class="hocr-block-evidence hocr-block-evidence--indent"
+                     :class="getEvidenceClass(item.hints.test_x_indent!)"
+                     :style="overlayItemAlignWithWord(item, item.firstWordBbox, 'indent')">
+                  <EvidenceIcon kind="x_indent" :evidence="item.hints.test_x_indent" />
+                </div>
+                <div v-if="hasEvidence(item.hints.test_x_dedent) && item.lastWordBbox"
+                     class="hocr-block-evidence hocr-block-evidence--dedent"
+                     :class="getEvidenceClass(item.hints.test_x_dedent!)"
+                     :style="overlayItemAlignWithWord(item, item.lastWordBbox, 'dedent')">
+                  <EvidenceIcon kind="x_dedent" :evidence="item.hints.test_x_dedent" />
+                </div>
               </div>
             </div>
           </div>
@@ -203,6 +177,7 @@ import {
   type HocrPage,
   type OverlayItem,
   type Evidence,
+  type HocrBlockHints,
   type OverlayRole,
   type Page,
   type Hint,
@@ -218,6 +193,7 @@ import {
 import { DEFAULT_PALETTE } from '../types';
 import {makeVariedPalette, applyColorSpecs} from '../utils/colors';
 import CustomPointer from "./CustomPointer.vue";
+import EvidenceIcon, { type Verdict } from './EvidenceIcon.vue';
 
 const LEVELS: HocrLevel[] = ['page', 'carea', 'block', 'line', 'word'];
 
@@ -239,6 +215,8 @@ const props = withDefaults(defineProps<{
   imageBaseUrl: string;
 
   showBlockHints?: boolean;
+  /** Force every block's evidence open, instead of only the hovered one. */
+  showAllEvidence?: boolean;
   showToolInfoBars?: boolean;
   showBadges?: boolean;
   showCropOverlay?: boolean;
@@ -266,6 +244,7 @@ const props = withDefaults(defineProps<{
   hocrLevel: null,
   presentationOnly: false,
   showBlockHints: false,
+  showAllEvidence: false,
   dimLayers: () => ({
     flows: false,
     layouts: false,
@@ -881,6 +860,21 @@ function getEvidenceValue(ev: Evidence): boolean | null {
   return null;
 }
 
+/** True once a test has actually said something, rather than "untested". */
+function hasEvidence(ev?: Evidence): boolean {
+  return !!ev && ev !== 'untested';
+}
+
+/** The evidence behind one edge's verdict: the neighbour quarrel if there is
+ *  one, otherwise this block's own conclusion. */
+function verdictEvidence(hints: HocrBlockHints, edge: 'preceding' | 'following'): Evidence | undefined {
+  const conflict = edge === 'preceding' ? hints.conflict_with_preceding : hints.conflict_with_following;
+  if (conflictStrength(conflict)) return conflict;
+  return edge === 'preceding' ? hints.break_from_preceding : hints.break_from_following;
+}
+
+/** True when the two sides of an edge contradict each other. The boolean of a
+ *  conflict hint means "a conflict exists", so only a true one counts. */
 function conflictStrength(ev?: Evidence): 'hard' | 'soft' | null {
   if (!ev || typeof ev === 'string') return null;
   if ('determined' in ev) return ev.determined ? 'hard' : null;
@@ -889,19 +883,45 @@ function conflictStrength(ev?: Evidence): 'hard' | 'soft' | null {
   return null;
 }
 
-function conflictTitle(direction: 'preceding' | 'following', item: OverlayItem): string {
-  const neighbour = direction === 'preceding' ? 'the preceding block' : 'the following block';
-  const mine = direction === 'preceding'
-      ? item.hints?.break_from_preceding
-      : item.hints?.break_from_following;
-  const myVal = mine ? getEvidenceValue(mine) : null;
+/** Folds everything known about one edge into the single thing we draw. */
+function verdictFor(hints: HocrBlockHints, edge: 'preceding' | 'following'): Verdict | null {
+  const conflict = edge === 'preceding' ? hints.conflict_with_preceding : hints.conflict_with_following;
+  if (conflictStrength(conflict)) return 'conflict';
 
-  if (myVal === null) return `Conflict at the boundary with ${neighbour}`;
-  if (myVal) {
-    return `Conflict: this block breaks from ${neighbour}, but ${neighbour} continues across the boundary`;
-  }
-  return `Conflict: this block continues across the boundary, but ${neighbour} breaks from it`;
+  const own = edge === 'preceding' ? hints.break_from_preceding : hints.break_from_following;
+  if (own === 'error') return 'error';
+  if (own === 'undetermined') return 'undetermined';
+
+  const val = own ? getEvidenceValue(own) : null;
+  if (val === null) return null;
+  return val ? 'break' : 'continue';
 }
+
+function verdictClass(hints: HocrBlockHints, edge: 'preceding' | 'following'): string {
+  const verdict = verdictFor(hints, edge);
+  if (!verdict) return '';
+  if (verdict === 'conflict') {
+    return `ev-conflict-${conflictStrength(
+        edge === 'preceding' ? hints.conflict_with_preceding : hints.conflict_with_following,
+    )}`;
+  }
+  if (verdict === 'error') return 'ev-error';
+  if (verdict === 'undetermined') return 'ev-undetermined';
+  return getEvidenceClass(
+      (edge === 'preceding' ? hints.break_from_preceding : hints.break_from_following)!,
+  );
+}
+
+const precedingTests = [
+  { key: 'test_y_reverse', kind: 'y_reverse' },
+  { key: 'test_preceding_terminal', kind: 'preceding_terminal' },
+] as const;
+
+const followingTests = [
+  { key: 'test_y_advance', kind: 'y_advance' },
+  { key: 'test_following_terminal', kind: 'following_terminal' },
+  { key: 'test_hyphenation', kind: 'hyphenation' },
+] as const;
 
 function overlayItemAlignWithWord(item: OverlayItem, wordBbox: HocrBbox, type: 'indent' | 'dedent') {
   const [bl, bt, br, bb] = item.bbox;
@@ -912,17 +932,20 @@ function overlayItemAlignWithWord(item: OverlayItem, wordBbox: HocrBbox, type: '
 
   if (bw === 0 || bh === 0) return {};
 
+  // Anchored to the word, then pushed off its line -- down for the first word,
+  // up for the last -- so the mark still points at the measured edge without
+  // landing in the corner where the verdict marker lives.
   if (type === 'indent') {
     return {
       left: `${((wl - bl) / bw) * 100}%`,
       top: `${((wt - bt) / bh) * 100}%`,
-      transform: 'translate(-70%, -20%)',
+      transform: 'translate(-70%, 80%)',
     };
   } else {
     return {
       left: `${((wr - bl) / bw) * 100}%`,
       top: `${((wb - bt) / bh) * 100}%`,
-      transform: 'translate(-30%, -80%)',
+      transform: 'translate(-30%, -180%)',
     };
   }
 }
@@ -1262,87 +1285,94 @@ function overlayItemStyle(item: OverlayItem) {
 
 .hocr-block-evidence {
   position: absolute;
-  font-weight: bold;
-  font-size: 1.2rem;
   line-height: 1;
-  text-shadow: 0 0 2px white;
   z-index: 5;
   display: flex;
   align-items: center;
   justify-content: center;
+  /* The scan shows through everything, so each mark carries its own halo. */
+  filter: drop-shadow(0 0 1.5px white) drop-shadow(0 0 1.5px white);
 }
 
 .hocr-block-hints-container {
   position: absolute;
   left: 50%;
   display: flex;
-  gap: 0.2rem;
+  gap: 0.3rem;
   z-index: 5;
   pointer-events: none;
 }
 
+/* Clear of the block edge, so the top container of one block and the bottom
+   container of the next cannot land on the same line. */
 .hocr-block-hints-container--top {
   top: 0;
-  transform: translate(0, -20%);
+  transform: translate(-50%, -115%);
 }
 
 .hocr-block-hints-container--bottom {
   bottom: 0;
-  transform: translate(0, 20%);
+  transform: translate(-50%, 115%);
 }
 
 .hocr-block-hints-container .hocr-block-evidence {
   position: relative;
-  font-size: 0.9rem;
 }
 
+/* The two verdict markers take opposite corners -- top-left for the preceding
+   edge, bottom-right for the following one. Diagonally opposed means even a
+   one-line block's pair cannot collide, and straddling the corner keeps them
+   clear of the text without reaching into the neighbouring page of the slider.
+   Position says which edge and nothing else: it must never shift with the
+   verdict, or the eye reads the movement as meaning. */
 .hocr-block-evidence--preceding {
   top: 0;
   left: 0;
+  transform: translate(-50%, -50%);
 }
-.hocr-block-evidence--preceding.ev-val-true { transform: translate(-50%, -50%); }
-.hocr-block-evidence--preceding.ev-val-false { transform: translate(-90%, -90%); }
 
 .hocr-block-evidence--following {
   bottom: 0;
   right: 0;
+  transform: translate(50%, 50%);
 }
-.hocr-block-evidence--following.ev-val-true { transform: translate(50%, 50%); }
-.hocr-block-evidence--following.ev-val-false { transform: translate(90%, 90%); }
 
+/* Positioned inline by overlayItemAlignWithWord(), which owns their transform. */
 .hocr-block-evidence--indent,
 .hocr-block-evidence--dedent {
-  font-size: 0.8rem;
+  opacity: 0.95;
 }
 
-/* Evidence colors aligned with HocrOutline.vue (True=Orange, False=Sky) */
-.ev-val-true.ev-suggested { color: var(--sl-color-orange-500); opacity: 0.8; }
-.ev-val-true.ev-determined { color: var(--sl-color-orange-600); opacity: 1; }
-.ev-val-true.ev-assigned { color: var(--sl-color-orange-700); opacity: 1; }
-
-.ev-val-false.ev-suggested { color: var(--sl-color-sky-500); opacity: 0.8; }
-.ev-val-false.ev-determined { color: var(--sl-color-sky-600); opacity: 1; }
-.ev-val-false.ev-assigned { color: var(--sl-color-sky-700); opacity: 1; }
-
-.ev-error { color: var(--sl-color-red-600); opacity: 1; font-size: 1.2rem; }
-
-/* Cross-boundary conflict markers sit just inboard of the conclusion glyph in
-   the same corner, so both stay readable. */
-.hocr-block-evidence--conflict-preceding {
-  top: 0;
-  left: 0;
-  transform: translate(60%, -90%);
-}
-.hocr-block-evidence--conflict-following {
-  bottom: 0;
-  right: 0;
-  transform: translate(-60%, 90%);
+/* The reasoning stays out of the way until you ask for it, by pointing at a
+   block or selecting one. Only ever one block at a time, which is what keeps
+   the page legible. */
+.hocr-block-evidence-group {
+  position: absolute;
+  inset: 0;
+  display: none;
 }
 
-.ev-conflict-hard { color: var(--sl-color-red-600); opacity: 1; font-size: 1.2rem; }
-.ev-conflict-soft { color: var(--sl-color-red-600); opacity: 0.45; font-size: 1.1rem; }
+.hocr-overlay:hover .hocr-block-evidence-group,
+.hocr-overlay--selected .hocr-block-evidence-group,
+.page-canvas--all-evidence .hocr-block-evidence-group {
+  display: block;
+}
 
-.ev-undetermined { color: var(--sl-color-neutral-500); opacity: 0.6; font-size: 1rem; }
+/* Evidence colors aligned with HocrOutline.vue (True=Orange, False=Sky).
+   Strength is drawn into the icon itself; colour only carries the direction. */
+.ev-val-true.ev-suggested { color: var(--sl-color-orange-500); }
+.ev-val-true.ev-determined { color: var(--sl-color-orange-600); }
+.ev-val-true.ev-assigned { color: var(--sl-color-orange-700); }
+
+.ev-val-false.ev-suggested { color: var(--sl-color-sky-500); }
+.ev-val-false.ev-determined { color: var(--sl-color-sky-600); }
+.ev-val-false.ev-assigned { color: var(--sl-color-sky-700); }
+
+.ev-error,
+.ev-conflict-hard { color: var(--sl-color-red-600); }
+.ev-conflict-soft { color: var(--sl-color-red-500); opacity: 0.7; }
+
+.ev-undetermined { color: var(--sl-color-neutral-500); }
 
 img {
   -webkit-user-select: none;

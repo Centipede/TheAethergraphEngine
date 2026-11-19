@@ -42,11 +42,17 @@
             <div v-if="block.hints.break_from_preceding && block.hints.break_from_preceding !== 'untested'" class="hocr-hints-line">
               <div class="hocr-hints-conclusion" :class="getEvidenceClass(block.hints.break_from_preceding)" :title="getConclusionTitle('preceding', block.hints.break_from_preceding)">
                 <sl-icon name="box-arrow-left"></sl-icon>
-                <span>{{ getEvidenceValue(block.hints.break_from_preceding) === true ? '◇' : '⬉' }}</span>
+                <EvidenceIcon
+                    v-if="verdictFor(block.hints, 'preceding')"
+                    kind="verdict"
+                    :verdict="verdictFor(block.hints, 'preceding')!"
+                    :evidence="block.hints.break_from_preceding"
+                    :size="16"
+                />
               </div>
               <template v-for="param in precedingParams" :key="param.key">
                 <div v-if="block.hints[param.key] && block.hints[param.key] !== 'untested'" class="hocr-hint-tag" :class="getEvidenceClass(block.hints[param.key]!)" :title="param.title">
-                  {{ param.label }}
+                  <EvidenceIcon :kind="param.kind" :evidence="block.hints[param.key]" :size="15" />
                 </div>
               </template>
               <div v-if="conflictStrength(block.hints.conflict_with_preceding)"
@@ -64,11 +70,17 @@
             <div v-if="block.hints.break_from_following && block.hints.break_from_following !== 'untested'" class="hocr-hints-line">
               <div class="hocr-hints-conclusion" :class="getEvidenceClass(block.hints.break_from_following)" :title="getConclusionTitle('following', block.hints.break_from_following)">
                 <sl-icon name="box-arrow-right"></sl-icon>
-                <span>{{ getEvidenceValue(block.hints.break_from_following) === true ? '◇' : '⬊' }}</span>
+                <EvidenceIcon
+                    v-if="verdictFor(block.hints, 'following')"
+                    kind="verdict"
+                    :verdict="verdictFor(block.hints, 'following')!"
+                    :evidence="block.hints.break_from_following"
+                    :size="16"
+                />
               </div>
               <template v-for="param in followingParams" :key="param.key">
                 <div v-if="block.hints[param.key] && block.hints[param.key] !== 'untested'" class="hocr-hint-tag" :class="getEvidenceClass(block.hints[param.key]!)" :title="param.title">
-                  {{ param.label }}
+                  <EvidenceIcon :kind="param.kind" :evidence="block.hints[param.key]" :size="15" />
                 </div>
               </template>
               <div v-if="conflictStrength(block.hints.conflict_with_following)"
@@ -136,6 +148,7 @@ import {inject, reactive, ref, watch} from 'vue';
 import type { Ref } from 'vue';
 import { useHocrContext } from '../composables/useHocr';
 import type { HocrLevel, HocrCarea, HocrBlock, HocrBlockHints, HocrLine, HocrWord, EditorPalette, Evidence } from '../types';
+import EvidenceIcon, { type Verdict } from './EvidenceIcon.vue';
 import { DEFAULT_PALETTE, findMultilevelById } from '../types';
 import type { FlowSchema, LayoutSchema, ColorSpecification } from '../types';
 import { applyColorSpecs } from '../utils/colors';
@@ -243,6 +256,21 @@ function isAssigned(ev?: Evidence): boolean {
   return typeof ev === 'object' && ev !== null && 'assigned' in ev;
 }
 
+/** Folds everything known about one edge into the single mark we draw. Kept in
+ *  step with the same helper in PageCanvas.vue. */
+function verdictFor(hints: HocrBlockHints, edge: 'preceding' | 'following'): Verdict | null {
+  const conflict = edge === 'preceding' ? hints.conflict_with_preceding : hints.conflict_with_following;
+  if (conflictStrength(conflict)) return 'conflict';
+
+  const own = edge === 'preceding' ? hints.break_from_preceding : hints.break_from_following;
+  if (own === 'error') return 'error';
+  if (own === 'undetermined') return 'undetermined';
+
+  const val = own ? getEvidenceValue(own) : null;
+  if (val === null) return null;
+  return val ? 'break' : 'continue';
+}
+
 function conflictStrength(ev?: Evidence): 'hard' | 'soft' | null {
   if (!ev || typeof ev === 'string') return null;
   if ('determined' in ev) return ev.determined ? 'hard' : null;
@@ -279,15 +307,16 @@ function getConclusionTitle(direction: 'preceding' | 'following', ev: Evidence):
 }
 
 const precedingParams = [
-  { key: 'test_x_indent', label: '⎡', title: 'First line indentation' },
-  { key: 'test_y_reverse', label: '⬓', title: 'Vertical gap from preceding (reverse jump)' },
-  { key: 'test_preceding_terminal', label: '⍑', title: 'Preceding block is terminal' },
+  { key: 'test_x_indent', kind: 'x_indent', title: 'First line indentation' },
+  { key: 'test_y_reverse', kind: 'y_reverse', title: 'Vertical gap from preceding (reverse jump)' },
+  { key: 'test_preceding_terminal', kind: 'preceding_terminal', title: 'Preceding block is terminal' },
 ] as const;
 
 const followingParams = [
-  { key: 'test_x_dedent', label: '⎦', title: 'Last line dedentation (short line)' },
-  { key: 'test_y_advance', label: '⬒', title: 'Vertical gap to following (advance jump)' },
-  { key: 'test_following_terminal', label: '⍊', title: 'Following block is terminal' },
+  { key: 'test_x_dedent', kind: 'x_dedent', title: 'Last line dedentation (short line)' },
+  { key: 'test_y_advance', kind: 'y_advance', title: 'Vertical gap to following (advance jump)' },
+  { key: 'test_following_terminal', kind: 'following_terminal', title: 'Following block is terminal' },
+  { key: 'test_hyphenation', kind: 'hyphenation', title: 'Last line ends in a hyphen (the paragraph carries on)' },
 ] as const;
 
 function rescan(careaId: string) {
@@ -593,8 +622,11 @@ function careaPreview(carea: HocrCarea, maxLen = 60): string {
 }
 
 .hocr-hint-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
   font-size: 0.6rem;
-  padding: 0 0.3rem;
+  padding: 0.1rem 0.25rem;
   border-radius: 3px;
   border: 1px solid transparent;
   opacity: 0.9;

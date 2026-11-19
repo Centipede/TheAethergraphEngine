@@ -39,6 +39,13 @@
       </div>
     </div>
 
+    <div class="threshold-row threshold-row--single">
+      <sl-checkbox size="small" :checked="showAllEvidence"
+                   @sl-change="$emit('update:showAllEvidence', $event.target.checked)">
+        Show all evidence
+      </sl-checkbox>
+    </div>
+
     <div class="action-buttons">
       <sl-button variant="primary" size="small" @click="onAutoBridgePage" :loading="hocrContext.loading.value">
         Auto Page
@@ -102,10 +109,13 @@ const props = defineProps<{
   project: Project | null;
   flowSet: Set<string>;
   thresholds: DetectionThresholds;
+  /** Keep every block's evidence open instead of only the hovered one. */
+  showAllEvidence: boolean;
 }>();
 
 const emit = defineEmits<{
   (e: 'update:flowSet', flowSet: Set<string>): void;
+  (e: 'update:showAllEvidence', value: boolean): void;
   (e: 'threshold-change'): void;
   (e: 'auto-bridge-page'): void;
   (e: 'auto-bridge-block'): void;
