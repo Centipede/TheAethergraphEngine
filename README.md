@@ -1,11 +1,20 @@
 # The AetherGraph Engine
 
-**Status September 9th 2026: latest 'main' is usable as a per-page hOCR editor**
-
 An automatic system for the ingestion, transcription, and indexing of printed works.
 
 This is the sister project of the actual study
 tool: [The Palimpset Engine](https://github.com/Centipede/ThePalimpsestEngine)
+
+## Status
+
+November 18th 2026: latest 'main' is usable as a per-page hOCR editor.**
+
+## Roadmap
+
+Before this tool is ready for public consumption _as a sister project to The Palimpsest Engine_, two major epics must be finished:
+
+- A robust section/chapter editor must be in place.
+- A well-tested import/export toolset must be in place. It must be able to construct a change list for all editions made that influences existing AI-generated metadata and study material existing.
 
 ## Prelude
 

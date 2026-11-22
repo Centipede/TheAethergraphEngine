@@ -337,6 +337,11 @@ pub async fn get_hocr_json(
                 crate::hocr_parser::FileSystemPageProvider::new(projects_dir, &machine_name_clone)
             {
                 p.calculate_all_metrics(&provider, &stem_clone);
+                // Cross-boundary conflicts are derived here rather than stored,
+                // so a conflict shows up on both blocks of an edge as soon as
+                // both sides have been analysed -- no re-bridge required, and
+                // no marker left behind once the conflict is resolved.
+                p.annotate_cross_boundaries(&provider, &stem_clone);
             }
         }
         Some(p)

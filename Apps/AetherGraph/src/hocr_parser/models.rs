@@ -167,6 +167,16 @@ pub struct HocrBlockHints {
     pub break_from_preceding: Evidence,
     #[serde(default)]
     pub break_from_following: Evidence,
+    /// Cross-boundary verdict: does this block's `break_from_preceding`
+    /// conclusion contradict the preceding block's `break_from_following`?
+    /// Derived on read, never persisted to hOCR. `true` means "a conflict
+    /// exists"; `Untested` means the neighbour has not been analysed yet.
+    #[serde(default)]
+    pub conflict_with_preceding: Evidence,
+    /// Cross-boundary verdict for the following edge. See
+    /// [`HocrBlockHints::conflict_with_preceding`].
+    #[serde(default)]
+    pub conflict_with_following: Evidence,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

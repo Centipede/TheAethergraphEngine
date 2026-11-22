@@ -66,6 +66,12 @@ export interface HocrBlockHints {
     test_following_terminal?: Evidence;
     break_from_preceding?: Evidence;
     break_from_following?: Evidence;
+    /** Derived server-side on read, never stored in the hOCR file: does this
+     *  block's boundary conclusion contradict its neighbour's? The boolean
+     *  means "a conflict exists"; 'untested' means the neighbour has not been
+     *  analysed yet. */
+    conflict_with_preceding?: Evidence;
+    conflict_with_following?: Evidence;
 }
 
 export interface HocrBlockMetrics {
