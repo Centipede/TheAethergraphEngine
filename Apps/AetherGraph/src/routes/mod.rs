@@ -107,6 +107,8 @@ pub fn build_router(state: AppState) -> Router {
         .route("/media/projects/{machine_name}/pages/scans/{filename}", get(handlers_web::serve_scan))
         .nest("/projects", projects)
         .nest("/api", api)
+        // Must come before the fallback, or the SPA catch-all swallows /mcp.
+        .nest_service("/mcp", crate::mcp::service(state.clone()))
         .fallback(static_handler)
         .with_state(state)
 }

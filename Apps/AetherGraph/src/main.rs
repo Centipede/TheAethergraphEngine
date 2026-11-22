@@ -1,6 +1,7 @@
 mod app_settings;
 mod hocr_parser;
 mod image_utils;
+mod mcp;
 mod ocr_client;
 mod ocr_poll;
 mod routes;

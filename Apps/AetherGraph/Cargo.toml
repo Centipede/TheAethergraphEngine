@@ -21,3 +21,10 @@ time = { version = "0.3", features = ["serde", "macros", "formatting", "parsing"
 reqwest = { version = "0.12", features = ["multipart", "json"] }
 scraper = "0.21"
 xmlparser = "0.13"
+rmcp = { version = "3.11", features = [
+    "server",
+    "macros",
+    "schemars",
+    "transport-streamable-http-server",
+    "transport-streamable-http-server-session",
+] }
