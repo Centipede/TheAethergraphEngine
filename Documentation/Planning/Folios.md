@@ -1,6 +1,6 @@
 # Folios Screen
 
-**Status July 28th 2026: Many tools implemented**
+**Status November 18th 2026: Low-level and per-page work is acceptable for now. A bridge-mode used for visualising and fixing paragraph flow between pages and areas was added. Folios will not be improved much from now on. Codex is the new work area.**
 
 ## Functionality
 
