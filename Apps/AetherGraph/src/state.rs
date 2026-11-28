@@ -8,6 +8,7 @@ use std::{
     collections::HashMap,
     path::PathBuf,
     sync::{Arc, RwLock},
+    time::SystemTime,
 };
 use tokio::task::AbortHandle;
 
@@ -15,6 +16,22 @@ use tokio::task::AbortHandle;
 #[folder = "templates/"]
 #[allow(dead_code)]
 struct EmbeddedTemplates;
+
+/// Where an agent says it is working, so the UI can follow along and show that
+/// the AI is driving.
+///
+/// In-memory only and never persisted: it describes a live session, not the book.
+#[derive(Clone, Debug)]
+pub struct AgentFocus {
+    pub machine_name: String,
+    /// Scan stem, e.g. `prolog-5` — never the printed page name.
+    pub stem: String,
+    /// A folio mode: assist, crop, hint, recognise, edit or bridge.
+    pub mode: String,
+    /// Bumped on every set so the UI can tell "moved again" from "unchanged".
+    pub seq: u64,
+    pub updated_at: SystemTime,
+}
 
 #[derive(Clone)]
 pub struct AppState {
@@ -24,6 +41,7 @@ pub struct AppState {
     pub settings: Arc<RwLock<AppSettings>>,
     pub ocr_status: Arc<RwLock<OcrServerStatus>>,
     pub active_jobs: Arc<RwLock<HashMap<String, AbortHandle>>>,
+    pub agent_focus: Arc<RwLock<Option<AgentFocus>>>,
 }
 
 impl AppState {
@@ -142,6 +160,7 @@ impl AppState {
             settings,
             ocr_status,
             active_jobs: Arc::new(RwLock::new(HashMap::new())),
+            agent_focus: Arc::new(RwLock::new(None)),
         }
     }
 }

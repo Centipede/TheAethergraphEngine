@@ -2,7 +2,7 @@ use crate::ocr_poll::ServerStatus;
 use crate::routes::projects::forms::{
     CreateProject, IngestQuery, RemoveRequest, ScanConflict, ScanPageResult, ScanRequest,
     SettingsUpdate, AutoAssistRequest, AutoBridgeRequest,
-    ScanJobStatus, JobState,
+    ScanJobStatus, JobState, AgentFocusResponse,
 };
 use crate::routes::projects::models::{IMPORT_ORDER_GAP, Page, PageDb, StructureDb, HintType};
 use crate::routes::projects::{images, storage, structure_sync};
@@ -1014,5 +1014,41 @@ pub async fn auto_bridge_block(
     match result {
         Ok(Some(())) => StatusCode::OK.into_response(),
         _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+// ── AGENT FOCUS ──────────────────────────────────────────────────────────────
+
+/// Where an agent is currently working, or `null` when nobody is driving.
+///
+/// Polled by the UI so the view can step along with an agent and show that it is doing
+/// so. The state lives only in memory (see `AppState::agent_focus`) and describes a live
+/// session, never the book.
+pub async fn agent_focus_get(State(state): State<AppState>) -> impl IntoResponse {
+    let focus = state.agent_focus.read().ok().and_then(|guard| {
+        guard.as_ref().map(|f| AgentFocusResponse {
+            machine_name: f.machine_name.clone(),
+            page: f.stem.clone(),
+            mode: f.mode.clone(),
+            seq: f.seq,
+            age_seconds: f
+                .updated_at
+                .elapsed()
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
+        })
+    });
+
+    Json(focus)
+}
+
+/// Hand control back to the user.
+pub async fn agent_focus_delete(State(state): State<AppState>) -> impl IntoResponse {
+    match state.agent_focus.write() {
+        Ok(mut guard) => {
+            *guard = None;
+            StatusCode::NO_CONTENT
+        }
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
     }
 }

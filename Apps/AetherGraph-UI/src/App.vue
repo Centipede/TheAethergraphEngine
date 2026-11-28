@@ -25,16 +25,18 @@
 </template>
 
 <script setup lang="ts">
-import {computed, ref, provide, nextTick, onMounted, onUnmounted} from 'vue';
-import {RouterView, useRoute} from 'vue-router';
+import {computed, ref, provide, nextTick, onMounted, onUnmounted, watch} from 'vue';
+import {RouterView, useRoute, useRouter} from 'vue-router';
 import { useHead } from '@unhead/vue';
 import NavBar from "./components/NavBar.vue";
 import type {PanelId} from './types';
 import { providePanelVisibilityContext } from './composables/usePanelVisibility';
 import { provideActiveProjectContext } from './composables/useActiveProject';
+import { provideAgentFocusContext } from './composables/useAgentFocus';
 import { isTypingElement } from './utils/dom';
 
 const route = useRoute();
+const router = useRouter();
 
 useHead({
   titleTemplate: '%s | AetherGraph',
@@ -48,6 +50,33 @@ const { activeProjectName } = provideActiveProjectContext(machineName);
 const projectName = activeProjectName;
 
 const { activePanels } = providePanelVisibilityContext();
+
+// Follow an agent through the book.
+//
+// Watches `seq` rather than the focus object, so the view moves when the agent moves to a
+// new page and does not fight the user if they navigate somewhere else in between: the
+// next set_focus brings them back, nothing else does.
+const { focus: agentFocus } = provideAgentFocusContext();
+
+watch(
+    () => agentFocus.value?.seq,
+    (seq) => {
+      const target = agentFocus.value;
+      if (seq === undefined || !target) return;
+
+      const name = `folios-${target.mode}`;
+      const alreadyThere =
+          route.name === name &&
+          String(route.params.machineName ?? '') === target.machine_name &&
+          String(route.params.page ?? '') === target.page;
+      if (alreadyThere) return;
+
+      void router.push({
+        name,
+        params: { machineName: target.machine_name, page: target.page },
+      });
+    }
+);
 
 const errorAlertRef = ref<HTMLElement & { toast: () => void } | null>(null);
 const errorMessage = ref('');

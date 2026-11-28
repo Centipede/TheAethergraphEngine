@@ -515,6 +515,24 @@ impl HocrBlockKind {
             | HocrBlockKind::List => false,
         }
     }
+    /// Inverse of [`HocrBlockKind::from_json_name`]. Matches the `snake_case` serde
+    /// representation, so the two stay interchangeable.
+    pub fn json_name(self) -> &'static str {
+        match self {
+            HocrBlockKind::Image => "image",
+            HocrBlockKind::Paragraph => "paragraph",
+            HocrBlockKind::Part => "part",
+            HocrBlockKind::Chapter => "chapter",
+            HocrBlockKind::Section => "section",
+            HocrBlockKind::Subsection => "subsection",
+            HocrBlockKind::Subsubsection => "subsubsection",
+            HocrBlockKind::Subsubsubsection => "subsubsubsection",
+            HocrBlockKind::Subsubsubsubsection => "subsubsubsubsection",
+            HocrBlockKind::Table => "table",
+            HocrBlockKind::List => "list",
+        }
+    }
+
     pub fn from_json_name(class_name: &str) -> Option<Self> {
         match class_name {
             "image" => Some(HocrBlockKind::Image),

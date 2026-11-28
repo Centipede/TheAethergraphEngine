@@ -161,3 +161,16 @@ pub struct AutoBridgeRequest {
     pub thresholds: DetectionThresholds,
     pub flow_set: Option<Vec<String>>,
 }
+/// Where an agent says it is working, as polled by the UI so the view can follow along.
+///
+/// `age_seconds` exists so the UI can ignore stale focus: without it, an agent that stops
+/// mid-task would leave the "agent is driving" indicator lit and the view hijacked.
+#[derive(Serialize)]
+pub struct AgentFocusResponse {
+    pub machine_name: String,
+    /// Scan stem, which is also the `:page` route param.
+    pub page: String,
+    pub mode: String,
+    pub seq: u64,
+    pub age_seconds: u64,
+}

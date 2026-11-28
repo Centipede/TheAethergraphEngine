@@ -148,6 +148,17 @@
 
       <div class="nav-mid-title-portal"></div>
 
+      <div v-if="isAgentDriving" class="agent-banner" role="status" aria-live="polite">
+        <sl-icon name="robot" class="agent-banner-icon"></sl-icon>
+        <span class="agent-banner-text">
+          AI is driving
+          <small v-if="focus">{{ focus.mode }} &middot; {{ focus.page }}</small>
+        </span>
+        <sl-button size="small" variant="default" @click="releaseControl">
+          Take back control
+        </sl-button>
+      </div>
+
       <div class="nav-end-tools-portal">
         <div v-if="panels" class="panel-toggle-group">
           <sl-icon-button
@@ -229,6 +240,7 @@
 import {ref, computed, onMounted, onUnmounted} from 'vue';
 import {RouterLink, useRoute} from 'vue-router';
 import type {PanelVisibility, PanelId} from '../types';
+import {useAgentFocusContext} from '../composables/useAgentFocus';
 
 const props = defineProps<{
   machineName: string;
@@ -241,6 +253,14 @@ const emit = defineEmits<{
 }>();
 
 const route = useRoute();
+
+// Make it unmistakable when an agent, rather than the user, is moving the view.
+const {focus, isAgentDriving, release} = useAgentFocusContext();
+
+function releaseControl() {
+  void release();
+}
+
 const hasProject = computed(() => props.machineName.length > 0);
 const currentPageParam = computed(() => route.params.page ? String(route.params.page) : undefined);
 const isIngestorRoute = computed(() => {
@@ -424,6 +444,58 @@ nav {
   display: flex;
   justify-content: center;
   min-width: 0;
+}
+
+/* Deliberately loud: the user must be able to tell at a glance that an agent is
+   steering the view. Revisit the styling once the workflow settles. */
+.agent-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  align-self: center;
+  margin-right: 1rem;
+  padding: 0.25rem 0.5rem 0.25rem 0.75rem;
+  border-radius: 999px;
+  background: var(--color-accent, #0d6efd);
+  color: #fff;
+  white-space: nowrap;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent, #0d6efd) 25%, transparent);
+  animation: agent-pulse 2s ease-in-out infinite;
+}
+
+@keyframes agent-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent, #0d6efd) 25%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 7px color-mix(in srgb, var(--color-accent, #0d6efd) 8%, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-banner {
+    animation: none;
+  }
+}
+
+.agent-banner-icon {
+  font-size: 20px;
+  flex-shrink: 0;
+}
+
+.agent-banner-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.1;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.agent-banner-text small {
+  font-size: 10px;
+  font-weight: 400;
+  opacity: 0.85;
+  text-transform: uppercase;
 }
 
 .nav-end-tools-portal {

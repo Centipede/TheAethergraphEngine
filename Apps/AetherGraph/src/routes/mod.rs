@@ -42,6 +42,7 @@ pub fn build_router(state: AppState) -> Router {
     let api = Router::new()
         .route("/settings",                                                             get(handlers_api::settings_get).post(handlers_api::settings_post))
         .route("/settings/service/status",                                              get(handlers_api::settings_service_status_get))
+        .route("/agent-focus",                                                          get(handlers_api::agent_focus_get).delete(handlers_api::agent_focus_delete))
         .route("/projects",                                                             get(handlers_api::list_projects).post(handlers_api::create_project))
         .route("/projects/{machine_name}",                                              get(handlers_api::get_project_metadata).put(handlers_api::put_project_metadata))
         .route("/projects/{machine_name}/structure",                                    get(handlers_api::get_project_structure).put(handlers_api::put_project_structure))
